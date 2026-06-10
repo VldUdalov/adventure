@@ -379,8 +379,10 @@ function drawFinn(c, isLeader){
   const arm=(sx2,hx,hy,bend)=>{
     limb2(sx2,shY,hx,hy,bend,2,shirt,skin,OUT,0.4);};   // рукав (футболка) сверху + кожа снизу
 
-  if(!isLeader) drawSword(-16,-72, 0.7, -1);      // меч за спиной (когда Финном не управляют)
-  if(!isLeader) arm(shX, fax, fay, faBend);   // дальняя рука за корпусом (когда меч за спиной)
+  if(!isLeader) {
+    drawSword(-16,-72, 0.7, -1);      // меч за спиной (когда Финном не управляют)
+    arm(shX, fax, fay, faBend);   // дальняя рука за корпусом (когда меч за спиной)
+  }
 
   leg( hipX, flx, fly, flBend, flPlant);          // дальняя нога
   leg(-hipX, blx, bly, blBend, blPlant);    // ближняя нога
