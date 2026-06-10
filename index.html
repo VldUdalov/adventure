@@ -33,7 +33,8 @@
   #bLeft {left:calc(20px + env(safe-area-inset-left));bottom:calc(24px + env(safe-area-inset-bottom));width:88px;height:88px;font-size:40px;}
   #bRight{left:calc(120px + env(safe-area-inset-left));bottom:calc(24px + env(safe-area-inset-bottom));width:88px;height:88px;font-size:40px;}
   #bJump {right:calc(24px + env(safe-area-inset-right));bottom:calc(24px + env(safe-area-inset-bottom));width:110px;height:110px;font-size:20px;}
-  #bSwap {right:calc(36px + env(safe-area-inset-right));bottom:calc(150px + env(safe-area-inset-bottom));width:88px;height:60px;font-size:16px;}</style>
+  #bSwap {right:calc(36px + env(safe-area-inset-right));bottom:calc(150px + env(safe-area-inset-bottom));width:88px;height:60px;font-size:16px;}
+  #bAtk  {right:calc(146px + env(safe-area-inset-right));bottom:calc(30px + env(safe-area-inset-bottom));width:90px;height:90px;font-size:17px;}</style>
 </head>
 <body>
 <div id="wrap">
@@ -41,7 +42,7 @@
   <div class="hint">
     <span class="k">←</span><span class="k">→</span> или <span class="k">A</span><span class="k">D</span> — идти&nbsp; •&nbsp;
     <span class="k">Space</span>/<span class="k">↑</span>/<span class="k">W</span> — прыжок&nbsp; •&nbsp;
-    <span class="k">X</span> — сменить персонажа
+    <span class="k">X</span> — сменить персонажа&nbsp; •&nbsp;<span class="k">Space</span> &mdash; удар
   </div>
 </div>
 
@@ -50,6 +51,7 @@
   <div id="bRight" class="btn round" data-k="ArrowRight">&#9654;</div>
   <div id="bJump"  class="btn round" data-k="Space">ПРЫЖОК</div>
   <div id="bSwap"  class="btn"       data-k="KeyX">СМЕНА</div>
+  <div id="bAtk"   class="btn round" data-k="ControlLeft">МЕЧ</div>
 </div>
 <script>
 const canvas = document.getElementById('game');
@@ -211,9 +213,9 @@ for(let i=0;i<50;i++){
 function makeChar(type,x){
   return {
     type, x, y:terrain(x), vx:0, vy:0, grounded:true, facing:1,
-    walk:0, moving:0, land:0,
+    walk:0, moving:0, land:0, atk:0,
     stepLen: 15,                        // длина шага: фаза привязана к пути → стопа не скользит (Джейк теперь тоже)
-    speed: type==='finn'?100:215,
+    speed: type==='finn'?100:115,
     jumpV: type==='finn'?670:710,
     name:  type==='finn'?'Финн':'Джейк'
   };
@@ -223,12 +225,15 @@ let jake = makeChar('jake',225);
 let leader = finn, follower = jake;
 
 const GRAV = 2100;
+const ATK_DUR = 0.32;   // длительность взмаха меча (сек)
 function stepChar(c,intent,dt){
   if(intent.move!==0) c.facing=intent.move;
   c.vx = intent.move*c.speed;
   c.x = clamp(c.x + c.vx*dt, 20, LEVEL_W-20);
 
   if(intent.jump && c.grounded){ c.vy=-c.jumpV; c.grounded=false; }
+  c.atk = Math.max(0, (c.atk||0) - dt);                               // таймер взмаха меча
+  if(intent.attack && c.type==='finn' && c.atk<=0) c.atk = ATK_DUR;   // старт удара (только управляемый Финн)
   c.vy += GRAV*dt;
   c.y += c.vy*dt;
 
@@ -254,8 +259,9 @@ function leaderIntent(){
   let move=0;
   if(keys['ArrowLeft'] ||keys['KeyA']) move-=1;
   if(keys['ArrowRight']||keys['KeyD']) move+=1;
-  const jump = justPressed['Space']||justPressed['ArrowUp']||justPressed['KeyW'];
-  return {move,jump};
+  const jump = justPressed['ArrowUp']||justPressed['KeyW'];
+  const attack = justPressed['Space'];
+  return {move,jump,attack};
 }
 
 // намерение напарника (идёт следом)
@@ -278,7 +284,22 @@ function followIntent(self,lead){
 
 // ---------- персонажи: рисование ----------
 // Финн — тонкие конечности, голова-скруглённый прямоугольник
-function drawFinn(c){
+// меч: рукоять в (hx,hy), клинок направлен вдоль угла ang (экранные коорд, +x вперёд)
+function drawSword(hx,hy,ang,atk){
+  ctx.save();
+  ctx.translate(hx,hy); ctx.rotate(ang);
+  ctx.lineCap='round';
+  ctx.strokeStyle=OUTLINE; ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(-15,0); ctx.lineTo(1,0); ctx.stroke();
+  ctx.strokeStyle='#6b4a2b'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(-15,0); ctx.lineTo(1,0); ctx.stroke();  // рукоять
+  bodyRR(-1,-7,3,16,1,'#dbe2ec',OUTLINE);                    // гарда (крестовина)
+  perspective = atk <= 0 ? 0 : (0.5 - atk) * 4 
+  ctx.beginPath();                                           // клинок
+  ctx.moveTo(2,-3.2); ctx.lineTo(54,-3.2 - perspective); ctx.lineTo(60,0); ctx.lineTo(54,3.2 + perspective); ctx.lineTo(2,3.2); ctx.closePath();
+  ctx.lineWidth=OUTLINE_W; ctx.strokeStyle=OUTLINE; ctx.stroke(); ctx.fillStyle='#dbe2ec'; ctx.fill();
+  ctx.beginPath(); ctx.moveTo(4,0); ctx.lineTo(26,0); ctx.lineWidth=1; ctx.strokeStyle='#aeb8c6'; ctx.stroke();  // дол
+  ctx.restore();
+}
+function drawFinn(c, isLeader){
   const skin='#f6cfa3', shirt='#3fa3d0', shorts='#2f63b0', hat='#fbfdff',
         sock='#ffffff', shoe='#23262e', OUT=OUTLINE;
   const p=c.walk, mv=c.moving, air=c.grounded?0:1;
@@ -316,6 +337,30 @@ function drawFinn(c){
     flPlant = 1 - clamp(Math.max(0,Math.sin(p+Math.PI))*lift/4, 0, 1);
   }
 
+  // меч двумя руками у управляемого Финна: стойка либо удар сверху вниз (по c.atk)
+  let swordAng=0, gripX=0, gripY=0;
+
+  if(isLeader){
+    if(c.atk>0){
+      k = c.atk/ATK_DUR
+      const attackPhase= 0.3
+      if (k > attackPhase){
+        const ap=(1.0 - k)/0.6, L=(u,v)=>u+(v-u) *ap;
+        gripX=L(14, 4); gripY=L(-98,-26); swordAng=L(-2.5, 0.5);   // занос над головой -> удар сверху вниз
+      }
+      else {
+        const am=(attackPhase-k)/attackPhase, L2=(u,v)=>u+(v-u) *am;
+        gripX=L2(4, 18); gripY=L2(-26,-42); swordAng=L2(0.5, -0.7);   // занос над головой -> удар сверху вниз
+      }
+    }else{
+
+      gripX=18; gripY=-42; swordAng=-0.7;                        // готовая стойка двумя руками
+    }
+    const cs=Math.cos(swordAng), sn=Math.sin(swordAng);
+    bax=gripX-1*cs;  bay=gripY-1*sn;                            // ближняя рука у гарды
+    fax=gripX-7*cs;  fay=gripY-7*sn;                            // дальняя рука ниже по рукояти
+    baBend=9; faBend=-9;                                        // руки согнуты (локти в стороны)
+  }
   const leg=(hx,fx,fy,bend,plant)=>{
     limb(hx,hipY,fx,fy-13,bend,2,skin,OUT);                // тонкая нога до щиколотки
     // угол стопы: на земле (plant=1) — параллельно склону; в махе/воздухе — вдоль голени (касательная)
@@ -334,7 +379,8 @@ function drawFinn(c){
   const arm=(sx2,hx,hy,bend)=>{
     limb2(sx2,shY,hx,hy,bend,2,shirt,skin,OUT,0.4);};   // рукав (футболка) сверху + кожа снизу
 
-  arm(shX, fax, fay, faBend);                 // дальняя рука (правая, за корпусом)
+  if(!isLeader) drawSword(-16,-72, 0.7, -1);      // меч за спиной (когда Финном не управляют)
+  if(!isLeader) arm(shX, fax, fay, faBend);   // дальняя рука за корпусом (когда меч за спиной)
 
   leg( hipX, flx, fly, flBend, flPlant);          // дальняя нога
   leg(-hipX, blx, bly, blBend, blPlant);    // ближняя нога
@@ -346,11 +392,17 @@ function drawFinn(c){
   capRR(-13,-46,26,15,3, shorts, OUT, true, 3, 0.88 + 0.15 * angL, angL, angR);    // шорты: штанины наклоняются за ногами
   capRR(-14,-90,26,32,11, hat, OUT, false, 2, 0.9);   // шапка-прямоугольник с ушками
   archRR(-13,-65,26,24,1, 2, shirt, OUT);    // футболка — верх/низ дугами вниз (5 = прогиб)
-  arm(-shX, bax, bay, baBend);                // ближняя рука (левая, перед корпусом)
+  if(isLeader) arm(shX, fax, fay, faBend);    // дальняя рука к рукояти (двумя руками, перед телом)
+
+  if(isLeader) drawSword(gripX, gripY, swordAng, c.atk/ATK_DUR);  // меч двумя руками
+  
   blob(1,-76,10, skin, OUT, 0.7);                  // лицо
   blob(-3,-78,1.0,'#22303f',null); blob(8,-78,1.0,'#22303f',null);  // глаза
   ctx.strokeStyle='#22303f'; ctx.lineWidth=1.0; ctx.lineCap='round';
   ctx.beginPath(); ctx.moveTo(1.0,-73.5); ctx.quadraticCurveTo(4,-72.6,7,-73.5); ctx.stroke();  // спокойный рот
+
+  arm(-shX, bax, bay, baBend);                // ближняя рука к рукояти
+ 
 }
 
 // Джейк — тело-прямоугольник, конечности и анимация как у Финна (жёлтый, без обуви), круглые уши, крупные глаза
@@ -364,13 +416,13 @@ function drawJake(c){
   let blx,bly, flx,fly, bax,bay, fax,fay, baBend, faBend, blBend, flBend;
 
   if(air){
-    const LEG=24, ARM=28;                                  // натуральные длины — конечности не укорачиваются
-    const tb=-0.7, tf=0.5;                                 // углы ног в прыжке
+    const LEG=18, ARM=20;                                  // натуральные длины — конечности не укорачиваются
+    const tb=-0.5, tf=0.3;                                 // углы ног в прыжке
     blx=-hipX+LEG*Math.sin(tb); bly=hipY+LEG*Math.cos(tb);
     flx= hipX+LEG*Math.sin(tf); fly=hipY+LEG*Math.cos(tf);
     const ab=-2.7, af=2.7;                                 // руки вверх-в стороны
-    bax=-shX+ARM*Math.sin(ab); bay=shY+ARM*Math.cos(ab);
-    fax= shX+ARM*Math.sin(af); fay=shY+ARM*Math.cos(af);
+    bax=-shX+ARM*Math.sin(ab); bay=shY-ARM*Math.cos(ab);
+    fax= shX+ARM*Math.sin(af); fay=shY-ARM*Math.cos(af);
     baBend=-3; faBend=3; blBend=-6; flBend=-6;             // колени согнуты
   }else{
     blx=-hipX+footX(p,stride);             bly=-Math.max(0,Math.sin(p))*lift;
@@ -415,7 +467,7 @@ function drawChar(c,isLeader){
   ctx.globalAlpha=0.5*(1-air*0.7);
   ctx.fillStyle='#10400f';
   const shAng=Math.atan((terrain(c.x+4)-terrain(c.x-4))/8);     // наклон тени = наклон земли по x
-  ctx.beginPath(); ctx.ellipse(sx, terrain(c.x)+4, 24-air*8, 4-air*1.5, shAng, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(sx, terrain(c.x)+4, 20-air*8, 4-air*1.5, shAng, 0, Math.PI*2); ctx.fill();
   ctx.restore();
 
   // тело (покачивание при ходьбе; без деформации в прыжке)
@@ -424,7 +476,7 @@ function drawChar(c,isLeader){
   const bob = (c.grounded && c.moving>0.1) ? -Math.abs(Math.sin(c.walk))*3 : 0;  // покачивание только при ходьбе
   ctx.translate(0,bob);
   ctx.scale(c.facing,1);
-  if(c.type==='finn') drawFinn(c); else drawJake(c);
+  if(c.type==='finn') drawFinn(c, isLeader); else drawJake(c);
   ctx.restore();
 
   // указатель «ведущий» (экранные координаты, без зеркала)
@@ -446,7 +498,7 @@ function drawCloud(c){
   ctx.save();
   ctx.beginPath();
   for(const lb of c.lobes){                              // все доли в один путь → единый силуэт
-    const cx=c.x+lb.dx*s, cy=c.y+lb.dy*s, rx=lb.rx*s, ry=lb.ry*s;
+    const cx=c.x +lb.dx*s, cy=c.y+lb.dy*s, rx=lb.rx*s, ry=lb.ry*s;
     ctx.moveTo(cx+rx, cy);
     ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI*2);
   }
