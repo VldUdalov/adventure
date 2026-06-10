@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Finn &amp; Jake — платформер</title>
+<style>
+  html,body{margin:0;height:100%;background:#0c1424;overflow:hidden;
+            font-family:"Segoe UI",Arial,sans-serif;}
+  #wrap{position:fixed;inset:0;display:flex;flex-direction:column;
+        align-items:center;justify-content:center;gap:12px;}
+  canvas{background:#000;border-radius:14px;
+         box-shadow:0 22px 70px rgba(0,0,0,.6);
+         max-width:98vw;max-height:86vh;}
+  .hint{color:#9fb3c8;font-size:14px;text-align:center;}
+  .hint b{color:#ffd34d;}
+  .hint .k{display:inline-block;padding:1px 7px;border:1px solid #3a4a60;
+           border-radius:6px;background:#172638;color:#dbe7f3;margin:0 1px;}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="960" height="540"></canvas>
+  <div class="hint">
+    <span class="k">←</span><span class="k">→</span> или <span class="k">A</span><span class="k">D</span> — идти&nbsp; •&nbsp;
+    <span class="k">Space</span>/<span class="k">↑</span>/<span class="k">W</span> — прыжок&nbsp; •&nbsp;
+    <span class="k">X</span> — сменить персонажа
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+
+// --- debug-watch: watch({mw}) или watch('имя',значение); значения рисуются внизу экрана ---
+let _watch = {}, _watchN = 0;
+function watch(a, b){
+  if(a && typeof a==='object' && !Array.isArray(a)) Object.assign(_watch, a);   // watch({mw, foo})
+  else if(typeof a==='string') _watch[a] = b;                                    // watch('mw', mw)
+  else _watch['#'+(_watchN++)] = a;                                              // watch(mw) — без имени
+}
+const OUTLINE = '#23272e';   // тёмный контур, как на референсе
+const OUTLINE_W = 2.0;       // толщина чёрной обводки персонажей
+
+// горизонтальный сдвиг стопы по фазе шага: мах — дуга вперёд, опора — линейно назад
+// (на опоре стопа идёт назад с постоянной скоростью = скорости тела → не скользит)
+function footX(ph, stride){
+  const T2=Math.PI*2; ph=((ph%T2)+T2)%T2;
+  if(ph<Math.PI) return -Math.cos(ph)*stride;          // мах (нога поднята)
+  return stride*(1 - 2*(ph-Math.PI)/Math.PI);          // опора (нога на земле): линейно назад
+}
+
+// ---------- мелкие помощники рисования ----------
+function rrPath(x,y,w,h,r){
+  r=Math.min(r,w/2,h/2);
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+function fillRR(x,y,w,h,r,color){ rrPath(x,y,w,h,r); ctx.fillStyle=color; ctx.fill(); }
+function circle(x,y,r,color){ ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fillStyle=color; ctx.fill(); }
+
+// контурные примитивы для персонажей (обводка как в мультфильме)
+function bodyRR(x,y,w,h,r,color,oc){ rrPath(x,y,w,h,r); if(oc){ctx.lineWidth=OUTLINE_W;ctx.strokeStyle=oc;ctx.stroke();} ctx.fillStyle=color; ctx.fill(); }
+// как bodyRR, но верхняя и нижняя грань — дуги, выгнутые вниз; curve = глубина прогиба по центру
+function archRR(x,y,w,h,r,curve,color,oc){
+  r=Math.min(r,w/2,h/2);
+  const x2=x+w, y2=y+h, cxm=x+w/2;
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.quadraticCurveTo(cxm, y+curve*2, x2-r, y);     // верхняя грань — дуга вниз
+  ctx.arcTo(x2,y,x2,y+r,r);
+  ctx.lineTo(x2,y2-r);
+  ctx.arcTo(x2,y2,x2-r,y2,r);
+  ctx.quadraticCurveTo(cxm, y2+curve*2, x+r, y2);    // нижняя грань — дуга вниз
+  ctx.arcTo(x,y2,x,y2-r,r);
+  ctx.lineTo(x,y+r);
+  ctx.arcTo(x,y,x+r,y,r);
+  ctx.closePath();
+  if(oc){ ctx.lineWidth=OUTLINE_W; ctx.strokeStyle=oc; ctx.stroke(); }
+  ctx.fillStyle=color; ctx.fill();
+}
+function blob(x,y,r,color,oc,sy){ sy=sy||1; ctx.beginPath(); ctx.ellipse(x,y,r,r*sy,0,0,Math.PI*2); if(oc){ctx.lineWidth=OUTLINE_W;ctx.strokeStyle=oc;ctx.stroke();} ctx.fillStyle=color; ctx.fill(); }
+// прямоугольник с двумя ушками-прямоугольниками единым силуэтом; flip=true → ушки снизу (для шорт)
+function capRR(x,y,w,h,r,color,oc,flip,earR, dist, ang1, ang2){
+  if(dist==null) dist=0.9;                                // доля ширины для ушей (0.9 = у углов); у шорт колеблется при ходьбе
+  ang1=ang1||0; ang2=ang2||0;                             // наклон каждого ушка (штанины) — следует за ногой/прыжком
+  const e1=x+w* (1 - dist), e2=x+w*dist, ey=flip?y+h:y;   // 0.18/0.82 — уши ближе к углам (было 0.25/0.75)
+  const ew=earR*1.7, poke=earR*1.5, inset=earR*2.0, er=earR*0.6;   // размеры ушка
+  const eyTop=flip?ey-inset:ey-poke, ehh=poke+inset;               // ушко сидит на кромке
+  // скруглённый прямоугольник как подпуть (по часовой — для единого силуэта без дыр)
+  const sub=(rx,ry,rw,rh,rr)=>{
+    rr=Math.min(rr,rw/2,rh/2);
+    ctx.moveTo(rx+rr,ry);
+    ctx.arcTo(rx+rw,ry,rx+rw,ry+rh,rr);
+    ctx.arcTo(rx+rw,ry+rh,rx,ry+rh,rr);
+    ctx.arcTo(rx,ry+rh,rx,ry,rr);
+    ctx.arcTo(rx,ry,rx+rw,ry,rr);
+    ctx.closePath();
+  };
+  // ушко-штанина с наклоном вокруг точки крепления (cx,ey) на кромке
+  const earSub=(cx,ang)=>{ ctx.save(); ctx.translate(cx,ey); ctx.rotate(ang); ctx.translate(-cx,-ey); sub(cx-ew/2,eyTop,ew,ehh,er); ctx.restore(); };
+  ctx.beginPath();
+  sub(x,y,w,h,r);                          // корпус
+  earSub(e1, ang1);                        // ушко-штанина 1 (наклон от ноги)
+  earSub(e2, ang2);                        // ушко-штанина 2 (наклон от ноги)
+  if(oc){ ctx.lineWidth=OUTLINE_W; ctx.strokeStyle=oc; ctx.stroke(); }
+  ctx.fillStyle=color; ctx.fill();         // заливка поверх скрывает внутренние швы
+}
+// «резиновая» конечность: дуга от сустава к концу с заданным изгибом + обводка
+function limb(jx,jy,ex,ey,bend,w,color,oc){
+  const dx=ex-jx, dy=ey-jy, L=Math.hypot(dx,dy)||1, nx=-dy/L, ny=dx/L;
+  const cx=(jx+ex)/2+nx*bend, cy=(jy+ey)/2+ny*bend;
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  ctx.beginPath(); ctx.moveTo(jx,jy); ctx.quadraticCurveTo(cx,cy,ex,ey);
+  if(oc){ ctx.lineWidth=w+OUTLINE_W; ctx.strokeStyle=oc; ctx.stroke(); }
+  ctx.lineWidth=w; ctx.strokeStyle=color; ctx.stroke();
+}
+// рука из двух цветов: рукав c1 сверху + кожа c2 снизу; та же кривая, делится в точке split, контур цельный
+function limb2(jx,jy,ex,ey,bend,w,c1,c2,oc,split){
+  const dx=ex-jx, dy=ey-jy, L=Math.hypot(dx,dy)||1, nx=-dy/L, ny=dx/L;
+  const cx=(jx+ex)/2+nx*bend, cy=(jy+ey)/2+ny*bend;       // контрольная точка кривой
+  const t=split;
+  const ax=jx+(cx-jx)*t, ay=jy+(cy-jy)*t;                 // де Кастельжо: A
+  const bx=cx+(ex-cx)*t, by=cy+(ey-cy)*t;                 // B
+  const mx=ax+(bx-ax)*t, my=ay+(by-ay)*t;                 // точка раздела на кривой
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  ctx.beginPath(); ctx.moveTo(jx,jy); ctx.quadraticCurveTo(cx,cy,ex,ey);   // цельный контур всей руки
+  ctx.lineWidth=w+OUTLINE_W; ctx.strokeStyle=oc; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(mx,my); ctx.quadraticCurveTo(bx,by,ex,ey);   // низ — кожа
+  ctx.lineWidth=w; ctx.strokeStyle=c2; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(jx,jy); ctx.quadraticCurveTo(ax,ay,mx,my);   // верх — рукав (поверх, круглый манжет)
+  ctx.lineWidth=w; ctx.strokeStyle=c1; ctx.stroke();
+}
+
+// ---------- мир ----------
+const LEVEL_W = 3600;
+const GROUND_BASE = H*0.80;
+
+// высота поверхности (где стоят ноги) в мировой координате x
+function terrain(x){
+  return GROUND_BASE
+       - Math.sin(x*0.0016+0.4)*46
+       - Math.sin(x*0.0041+1.3)*24
+       - Math.sin(x*0.011 +0.2)*12;
+}
+function midHill(x){ return H*0.60 - Math.sin(x*0.008+2.0)*40 - Math.sin(x*0.006+0.7)*18; }
+function farHill(x){ return H*0.55 - Math.sin(x*0.005+0.9)*34 - Math.sin(x*0.004+2.5)*16; }
+
+let camX = 0, camTargetX = 0, T = 0;
+
+// облака
+const clouds = [];
+for(let i=0;i<6;i++){
+  const s=0.6+Math.random()*0.8, lobes=[];
+  const n=3+(Math.random()*3|0);                       // 3-5 нижних долей
+  const xs=[]; let lx=0;
+  for(let k=0;k<n;k++){ xs.push(lx); lx += 15+Math.random()*11; }
+  const mid=lx/2;
+  const midK=(n-1)/2;
+  for(let k=0;k<n;k++){                                 // нижний ряд (низ выровнен → плоское дно)
+    const edgeF = 1 - 0.5*(midK ? Math.abs(k-midK)/midK : 0);   // доли меньше по краям (1 в центре, 0.5 на концах)
+    const rx=(12+Math.random()*9)*edgeF, ry=rx*(0.78+Math.random()*0.2);
+    lobes.push({dx:xs[k]-mid, dy:2-ry, rx, ry});
+  }
+  const tn=1+(Math.random()*2|0);                       // 1-2 верхних бугра (высота, разнообразие)
+  for(let k=0;k<tn;k++){
+    const rx=11+Math.random()*8;
+    lobes.push({dx:(-0.4+Math.random()*0.8)*mid, dy:-6-Math.random()*9, rx, ry:rx*0.85});
+  }
+  clouds.push({x:Math.random()*W, y:24+Math.random()*120, s, spd:8+Math.random()*16, lobes});
+}
+
+// трава: пучки из трёх параллельных тёмно-зелёных полосок, разбросаны по всей плоскости земли
+const grass=[];
+for(let i=0;i<50;i++){
+  const gx=Math.random()*LEVEL_W, top=terrain(gx)+5;
+  grass.push({x:gx, y:top+Math.random()*(H-top-3), size:0.7+Math.random()*0.4});
+}
+
+// ---------- персонажи ----------
+function makeChar(type,x){
+  return {
+    type, x, y:terrain(x), vx:0, vy:0, grounded:true, facing:1,
+    walk:0, moving:0, land:0,
+    stepLen: type==='finn'?15:0,        // длина шага: фаза привязана к пути → стопа не скользит (0 = старая схема)
+    speed: type==='finn'?100:215,
+    jumpV: type==='finn'?770:710,
+    name:  type==='finn'?'Финн':'Джейк'
+  };
+}
+let finn = makeChar('finn',300);
+let jake = makeChar('jake',225);
+let leader = finn, follower = jake;
+
+const GRAV = 2100;
+function stepChar(c,intent,dt){
+  if(intent.move!==0) c.facing=intent.move;
+  c.vx = intent.move*c.speed;
+  c.x = clamp(c.x + c.vx*dt, 20, LEVEL_W-20);
+
+  if(intent.jump && c.grounded){ c.vy=-c.jumpV; c.grounded=false; }
+  c.vy += GRAV*dt;
+  c.y += c.vy*dt;
+
+  const g = terrain(c.x);
+  const wasGround = c.grounded;
+  // приклеивание к склону: на спуске не отрываемся от земли (иначе поза земля/воздух мерцает)
+  if(c.y>=g || (wasGround && c.vy>=0 && g-c.y<=12)){ c.y=g; c.vy=0; c.grounded=true; }
+  else c.grounded=false;
+  if(c.grounded && !wasGround) c.land = 1;          // момент приземления
+  c.land = Math.max(0, c.land - dt*6);
+
+  const tgt = (Math.abs(c.vx)>5 && c.grounded)?1:0;
+  c.moving += (tgt-c.moving)*Math.min(1,dt*12);
+  if(tgt){
+    if(c.stepLen) c.walk += Math.abs(c.vx)*dt*Math.PI/(2*c.stepLen);  // фаза по пройденному пути → нет проскальзывания
+    else c.walk += dt*9*(Math.abs(c.vx)/c.speed + 0.4);
+  }
+}
+
+// намерение игрока (ведущий)
+const keys={}; let justPressed={};
+function leaderIntent(){
+  let move=0;
+  if(keys['ArrowLeft'] ||keys['KeyA']) move-=1;
+  if(keys['ArrowRight']||keys['KeyD']) move+=1;
+  const jump = justPressed['Space']||justPressed['ArrowUp']||justPressed['KeyW'];
+  return {move,jump};
+}
+
+// намерение напарника (идёт следом)
+function followIntent(self,lead){
+  const targetX = lead.x - lead.facing*52;   // встать чуть позади ведущего
+  const dx = targetX - self.x;
+  let move = 0;
+  if(dx>14) move=1; else if(dx<-14) move=-1;
+
+  // совсем рядом — стоим и смотрим на ведущего
+  if(Math.abs(lead.x-self.x)<40){ move=0; self.facing=Math.sign(lead.x-self.x)||self.facing; }
+
+  let jump=false;
+  if(self.grounded){
+    if(move!==0 && terrain(self.x+move*26) < terrain(self.x)-26) jump=true;     // крутой подъём впереди
+    if(lead.y < self.y-50 && Math.abs(dx)<170) jump=true;                       // ведущий заметно выше
+  }
+  return {move,jump};
+}
+
+// ---------- персонажи: рисование ----------
+// Финн — тонкие конечности, голова-скруглённый прямоугольник
+function drawFinn(c){
+  const skin='#f6cfa3', shirt='#3fa3d0', shorts='#2f63b0', hat='#fbfdff',
+        sock='#ffffff', shoe='#23262e', OUT=OUTLINE;
+  const p=c.walk, mv=c.moving, air=c.grounded?0:1;
+  const stride=c.stepLen*mv, lift=7*mv, asw=8*mv;
+  const hipY=-28, hipX=10.5, shY=-62, shX=14;
+
+  let blx,bly, flx,fly, bax,bay, fax,fay, baBend, faBend, blBend, flBend, blPlant, flPlant;
+  if(air){
+    const LEG=20, ARM=31;                                  // натуральные длины — конечности не укорачиваются
+    const tb=-0.7, tf=0.5;                                 // углы ног в прыжке (от вертикали вниз)
+    blx=-hipX+LEG*Math.sin(tb); bly=hipY+LEG*Math.cos(tb)+13;
+    flx= hipX+LEG*Math.sin(tf); fly=hipY+LEG*Math.cos(tf)+13;
+    const ab=-2.7, af=2.7;                                 // руки вверх-в стороны, полной длины
+    bax=-shX+ARM*Math.sin(ab); bay=shY-ARM*Math.cos(ab);
+    fax= shX+ARM*Math.sin(af); fay=shY-ARM*Math.cos(af);
+    baBend=-3; faBend=3; blBend=-6; flBend=-6;             // колени согнуты
+    blPlant=0; flPlant=0;                                  // в воздухе стопы идут по ноге
+  }else{
+    blx=-hipX+footX(p,stride);             bly=-Math.max(0,Math.sin(p))*lift;
+    flx= hipX+footX(p+Math.PI,stride);     fly=-Math.max(0,Math.sin(p+Math.PI))*lift;
+    bly += terrain(c.x + c.facing*blx) - c.y + 5;   // ставим стопу на реальную землю под ней (наклон)
+    fly += terrain(c.x + c.facing*flx) - c.y + 5;
+    // руки — маятник в противофазе ногам; +x = по ходу движения
+    const sb= Math.cos(p)*asw;             // мах дальней руки (вперёд при p=0)
+    const sf=-Math.cos(p)*asw;             // ближней руки (противофаза)
+    bax=-shX-1+sb;  bay=-30 - Math.max(0,sb)*0.45;     // руки длиннее на 25% (было -41)
+    fax= shX+1+sf;  fay=-30 - Math.max(0,sf)*0.45;
+    baBend = sb*0.25;                      // локоть отстаёт за махом
+    faBend = sf*0.25;
+    blBend = -4 - 5*mv*Math.max(0,Math.sin(p));           // колено сильнее сгибается в фазе подъёма
+    flBend = -4 - 5*mv*Math.max(0,Math.sin(p+Math.PI));
+    blPlant = 1 - clamp(Math.max(0,Math.sin(p))*lift/4, 0, 1);          // 1 = стопа на земле, 0 = в махе
+    flPlant = 1 - clamp(Math.max(0,Math.sin(p+Math.PI))*lift/4, 0, 1);
+  }
+
+  const leg=(hx,fx,fy,bend,plant)=>{
+    limb(hx,hipY,fx,fy-13,bend,2,skin,OUT);                // тонкая нога до щиколотки
+    // угол стопы: на земле (plant=1) — параллельно склону; в махе/воздухе — вдоль голени (касательная)
+    const vx=fx-hx, vy=(fy-13)-hipY, Ll=Math.hypot(vx,vy)||1, nlx=-vy/Ll, nly=vx/Ll;
+    const ccx=(hx+fx)/2+nlx*bend, ccy=(hipY+(fy-13))/2+nly*bend;
+    const legAng = Math.atan2(-(fx-ccx),(fy-13)-ccy);                          // вдоль голени
+    const wx = c.x + c.facing*fx;
+    const groundAng = Math.atan((terrain(wx+3)-terrain(wx-3))/6) * c.facing;   // параллельно земле под стопой
+    const footAng = clamp(legAng*(1-plant) + groundAng*plant, -1.1, 1.1);
+    ctx.save();
+    ctx.translate(fx,fy-13); ctx.rotate(footAng); ctx.translate(4,13); // поворот вокруг щиколотки
+    bodyRR(-6,-9,7,2,2, sock, OUT);                       // белый носок
+    bodyRR(-6,-4,12,3,3, shoe, OUT);                       // чёрный ботинок
+    ctx.restore();
+  };
+  const arm=(sx2,hx,hy,bend)=>{
+    limb2(sx2,shY,hx,hy,bend,2,shirt,skin,OUT,0.4);};   // рукав (футболка) сверху + кожа снизу
+
+  arm(shX, fax, fay, faBend);                 // дальняя рука (правая, за корпусом)
+
+  leg( hipX, flx, fly, flBend, flPlant);          // дальняя нога
+  leg(-hipX, blx, bly, blBend, blPlant);    // ближняя нога
+
+  // наклон штанин = направление соответствующей ноги (шаг + прыжок)
+  const pantA=(fx,hx,fyv)=> clamp(Math.atan2(-(fx-hx),(fyv-13)-hipY)*0.7,-0.7,0.7);
+  const angL=pantA(blx,-hipX,bly), angR=pantA(flx,hipX,fly);
+
+  capRR(-13,-46,26,15,3, shorts, OUT, true, 3, 0.88 + 0.15 * angL, angL, angR);    // шорты: штанины наклоняются за ногами
+  capRR(-14,-90,26,32,11, hat, OUT, false, 2, 0.9);   // шапка-прямоугольник с ушками
+  archRR(-13,-65,26,24,1, 2, shirt, OUT);    // футболка — верх/низ дугами вниз (5 = прогиб)
+  arm(-shX, bax, bay, baBend);                // ближняя рука (левая, перед корпусом)
+  blob(1,-76,10, skin, OUT, 0.7);                  // лицо
+  blob(-3,-78,1.0,'#22303f',null); blob(8,-78,1.0,'#22303f',null);  // глаза
+  ctx.strokeStyle='#22303f'; ctx.lineWidth=1.0; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(1.0,-73.5); ctx.quadraticCurveTo(4,-72.6,7,-73.5); ctx.stroke();  // спокойный рот
+}
+
+// Джейк — стоит на двух ногах, большие глаза, острые уши (по референсу)
+function drawJake(c){
+  const body='#f2b63e', belly='#f9d27a', OUT=OUTLINE, nose='#23232a';
+  const p=c.walk, mv=c.moving, air=c.grounded?0:1;
+  const stride=7*mv, lift=6*mv, asw=4*mv;
+  const hipY=-24, hipX=6, shY=-46, shX=13;
+
+  let blx,bly, flx,fly, bax,bay, fax,fay;
+  if(air){
+    blx=-hipX-3; bly=-14; flx=hipX+5; fly=-6;
+    bax=-shX-6; bay=-56; fax=shX+7; fay=-58;
+  }else{
+    blx=-hipX+Math.cos(p)*stride;          bly=-Math.max(0,Math.sin(p))*lift;
+    flx= hipX+Math.cos(p+Math.PI)*stride;  fly=-Math.max(0,Math.sin(p+Math.PI))*lift;
+    bax=-shX-1+Math.cos(p+Math.PI)*asw;    bay=-30+Math.max(0,Math.sin(p+Math.PI))*2;
+    fax= shX+1+Math.cos(p)*asw;            fay=-30+Math.max(0,Math.sin(p))*2;
+  }
+  const leg=(hx,fx,fy)=>{ limb(hx,hipY,fx,fy,(fx-hx)*0.3,7,body,OUT); blob(fx,fy,4.2,body,OUT); };
+  const arm=(sx2,hx,hy,bend)=>{ limb(sx2,shY,hx,hy,bend,6,body,OUT); blob(hx,hy,4,body,OUT); };
+  // острое ухо торчком, с флоппи-дрожанием
+  const ear=(bx,dir)=>{
+    const j=Math.sin(T*3+dir)*1.4 + mv*Math.sin(p+1)*1.4;
+    const tx=bx+dir*7+j;
+    ctx.beginPath();
+    ctx.moveTo(bx-4,-56);
+    ctx.quadraticCurveTo(bx+dir*3,-66, tx,-73);
+    ctx.quadraticCurveTo(bx+dir*6,-62, bx+5,-55);
+    ctx.closePath();
+    ctx.lineWidth=OUTLINE_W; ctx.strokeStyle=OUT; ctx.stroke(); ctx.fillStyle=body; ctx.fill();
+  };
+
+  limb(-14,-22, -21, -26+Math.sin(T*5)*3, -5, 5, body, OUT);   // хвост
+  ear(-3,-1);                                  // дальнее ухо
+  arm(-shX, bax, bay, 5);                      // дальняя рука
+  leg(-hipX, blx, bly);                        // дальняя нога
+
+  bodyRR(-15,-60,30,46,15, body, OUT);         // тело + голова (груша)
+  ctx.beginPath(); ctx.ellipse(2,-26,10,13,0,0,Math.PI*2); ctx.fillStyle=belly; ctx.fill();  // живот
+
+  leg( hipX, flx, fly);                        // ближняя нога
+  arm(shX, fax, fay, -5);                      // ближняя рука
+
+  bodyRR(5,-46,21,15,8, body, OUT);            // выступающая морда
+  blob(24,-41,3.6, nose, OUT);                 // нос
+  ctx.strokeStyle=OUT; ctx.lineWidth=1.8; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(23,-38); ctx.quadraticCurveTo(13,-30,5,-35); ctx.stroke();  // рот
+  blob(7,-52,6.2,'#fff',OUT); blob(17,-52,6.2,'#fff',OUT);    // большие глаза
+  blob(9,-52,2.6,'#222',null); blob(19,-52,2.6,'#222',null);
+  blob(10.5,-53.5,1,'#fff',null); blob(20.5,-53.5,1,'#fff',null);  // блики
+  ear(11,1);                                   // ближнее ухо
+}
+
+function drawChar(c,isLeader){
+  const sx=c.x-camX, sy=c.y;
+  const air = c.grounded?0:clamp((terrain(c.x)-c.y)/120,0,1);
+
+  // тень
+  ctx.save();
+  ctx.globalAlpha=0.5*(1-air*0.7);
+  ctx.fillStyle='#10400f';
+  const shAng=Math.atan((terrain(c.x+4)-terrain(c.x-4))/8);     // наклон тени = наклон земли по x
+  ctx.beginPath(); ctx.ellipse(sx, terrain(c.x)+4, 24-air*8, 4-air*1.5, shAng, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  // тело (покачивание при ходьбе; без деформации в прыжке)
+  ctx.save();
+  ctx.translate(sx,sy);
+  const bob = (c.grounded && c.moving>0.1) ? -Math.abs(Math.sin(c.walk))*3 : 0;  // покачивание только при ходьбе
+  ctx.translate(0,bob);
+  ctx.scale(c.facing,1);
+  if(c.type==='finn') drawFinn(c); else drawJake(c);
+  ctx.restore();
+
+  // указатель «ведущий» (экранные координаты, без зеркала)
+  if(isLeader){
+    const topY = c.type==='finn' ? sy-102 : sy-82;
+    const by = topY-14 + Math.sin(T*4)*4;
+    ctx.fillStyle='#ffd34d'; ctx.strokeStyle='#9a6b00'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(sx-7,by); ctx.lineTo(sx+7,by); ctx.lineTo(sx,by+9); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  }
+}
+
+// ---------- фон и земля ----------
+let sky=ctx.createLinearGradient(0,0,0,H);
+sky.addColorStop(0,'#5cc6ef'); sky.addColorStop(0.6,'#bfeaff'); sky.addColorStop(1,'#e9fbff');
+
+function drawCloud(c){
+  const s=c.s;
+  ctx.save();
+  ctx.beginPath();
+  for(const lb of c.lobes){                              // все доли в один путь → единый силуэт
+    const cx=c.x+lb.dx*s, cy=c.y+lb.dy*s, rx=lb.rx*s, ry=lb.ry*s;
+    ctx.moveTo(cx+rx, cy);
+    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI*2);
+  }
+  ctx.lineWidth=OUTLINE_W; ctx.strokeStyle=OUTLINE; ctx.stroke();   // чёрная обводка силуэта
+  ctx.fillStyle='#fbfdff'; ctx.fill();                             // заливка поверх скрывает внутренние швы
+  ctx.restore();
+}
+function drawHillLayer(fn,parallax,color){
+  ctx.beginPath(); ctx.moveTo(0,H);
+  for(let sx=0;sx<=W;sx+=10) ctx.lineTo(sx, fn(sx+camX*parallax));
+  ctx.lineTo(W,H); ctx.closePath(); ctx.fillStyle=color; ctx.fill();
+}
+function drawGround(){
+  const pts=[];
+  for(let sx=-6;sx<=W+6;sx+=6) pts.push([sx,terrain(sx+camX)]);
+
+  // зелёная земля (без коричневого), заливка вниз до края
+  ctx.beginPath(); ctx.moveTo(pts[0][0],H);
+  for(const p of pts) ctx.lineTo(p[0],p[1]);
+  ctx.lineTo(pts[pts.length-1][0],H); ctx.closePath();
+  ctx.fillStyle='#5fb83f'; ctx.fill();
+
+  // чёрный контур по поверхности земли
+  ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]);
+  for(const p of pts) ctx.lineTo(p[0],p[1]);
+  ctx.lineWidth=1; ctx.strokeStyle=OUTLINE; ctx.stroke();
+}
+// трава — три параллельные вертикальные тёмно-зелёные полоски, разбросаны по всей плоскости земли
+function drawGrass(){
+  ctx.strokeStyle='#2e7a2b'; ctx.lineWidth=1; ctx.lineCap='round';
+  ctx.beginPath();
+  for(const g of grass){
+    const sx=g.x-camX; if(sx<-10||sx>W+10) continue;
+    const h=6*g.size, d=5*g.size;
+    ctx.moveTo(sx-d, g.y); ctx.lineTo(sx-d, g.y-h);    // три параллельные полоски
+    ctx.moveTo(sx,   g.y); ctx.lineTo(sx,   g.y-h);
+    ctx.moveTo(sx+d, g.y); ctx.lineTo(sx+d, g.y-h);
+  }
+  ctx.stroke();
+}
+
+
+// ---------- цикл ----------
+function update(dt){
+  if(justPressed['KeyX']){ const t=leader; leader=follower; follower=t; }
+  stepChar(leader,   leaderIntent(),            dt);
+  stepChar(follower, followIntent(follower,leader), dt);
+
+  camTargetX = clamp(leader.x - W/2, 0, LEVEL_W-W);
+  camX += (camTargetX-camX)*Math.min(1,dt*6);
+
+  for(const cl of clouds){ cl.x-=cl.spd*dt; if(cl.x<-200) cl.x=W+200; }
+  justPressed={};
+}
+// строки watch внизу экрана
+function drawWatch(){
+  const keys=Object.keys(_watch);
+  if(!keys.length) return;
+  const lines=keys.map(k=>{
+    let v=_watch[k];
+    if(typeof v==='number') v = Number.isInteger(v)? v : +v.toFixed(3);
+    else if(v && typeof v==='object') v = JSON.stringify(v);
+    return k+' = '+v;
+  });
+  ctx.save();
+  ctx.font='13px Consolas,monospace';
+  const pad=7, lh=16;
+  let wMax=0; for(const s of lines) wMax=Math.max(wMax, ctx.measureText(s).width);
+  const boxW=wMax+pad*2, boxH=lines.length*lh+pad*2, bx=8, by=H-boxH-8;
+  fillRR(bx,by,boxW,boxH,6,'rgba(10,16,28,0.72)');
+  ctx.fillStyle='#7cf2a6'; ctx.textAlign='left'; ctx.textBaseline='top';
+  lines.forEach((s,i)=> ctx.fillText(s, bx+pad, by+pad+i*lh));
+  ctx.restore();
+}
+
+function render(){
+  ctx.fillStyle=sky; ctx.fillRect(0,0,W,H);
+  for(const cl of clouds) drawCloud(cl);
+  drawHillLayer(farHill,0.30,'#b9d6cf');
+  drawHillLayer(midHill,0.55,'#8fc77c');
+  drawGround();
+  drawGrass();
+  drawChar(follower,false);
+  drawChar(leader,true);
+  drawWatch();
+}
+
+let last=performance.now();
+function frame(now){
+  const dt=Math.min(0.033,(now-last)/1000); last=now; T+=dt;
+  _watch={}; _watchN=0;          // сброс watch-значений каждый кадр
+  update(dt); render();
+  requestAnimationFrame(frame);
+}
+
+camX = camTargetX = clamp(leader.x - W/2, 0, LEVEL_W-W);
+
+addEventListener('keydown',e=>{
+  if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+  if(!keys[e.code]) justPressed[e.code]=true;
+  keys[e.code]=true;
+});
+addEventListener('keyup',e=>{ keys[e.code]=false; });
+addEventListener('blur',()=>{ for(const k in keys) keys[k]=false; });
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
