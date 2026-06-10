@@ -166,7 +166,7 @@ for(let i=0;i<6;i++){
   const midK=(n-1)/2;
   for(let k=0;k<n;k++){                                 // нижний ряд (низ выровнен → плоское дно)
     const edgeF = 1 - 0.5*(midK ? Math.abs(k-midK)/midK : 0);   // доли меньше по краям (1 в центре, 0.5 на концах)
-    const rx=(12+Math.random()*9)*edgeF, ry=rx*(0.78+Math.random()*0.2);
+    const rx=(22+Math.random()*9)*edgeF, ry=rx*(0.78+Math.random()*0.2);
     lobes.push({dx:xs[k]-mid, dy:2-ry, rx, ry});
   }
   const tn=1+(Math.random()*2|0);                       // 1-2 верхних бугра (высота, разнообразие)
@@ -189,9 +189,9 @@ function makeChar(type,x){
   return {
     type, x, y:terrain(x), vx:0, vy:0, grounded:true, facing:1,
     walk:0, moving:0, land:0,
-    stepLen: type==='finn'?15:0,        // длина шага: фаза привязана к пути → стопа не скользит (0 = старая схема)
+    stepLen: 15,                        // длина шага: фаза привязана к пути → стопа не скользит (Джейк теперь тоже)
     speed: type==='finn'?100:215,
-    jumpV: type==='finn'?770:710,
+    jumpV: type==='finn'?670:710,
     name:  type==='finn'?'Финн':'Джейк'
   };
 }
@@ -260,18 +260,20 @@ function drawFinn(c){
         sock='#ffffff', shoe='#23262e', OUT=OUTLINE;
   const p=c.walk, mv=c.moving, air=c.grounded?0:1;
   const stride=c.stepLen*mv, lift=7*mv, asw=8*mv;
-  const hipY=-28, hipX=10.5, shY=-62, shX=14;
+  const hipY=-28,  shY=-62, shX=14;
+  hipX=10.5;
 
   let blx,bly, flx,fly, bax,bay, fax,fay, baBend, faBend, blBend, flBend, blPlant, flPlant;
   if(air){
-    const LEG=20, ARM=31;                                  // натуральные длины — конечности не укорачиваются
+    hipX = hipX + 2
+    const LEG=15, ARM=31;                                  // натуральные длины — конечности не укорачиваются
     const tb=-0.7, tf=0.5;                                 // углы ног в прыжке (от вертикали вниз)
-    blx=-hipX+LEG*Math.sin(tb); bly=hipY+LEG*Math.cos(tb)+13;
-    flx= hipX+LEG*Math.sin(tf); fly=hipY+LEG*Math.cos(tf)+13;
+    blx=-hipX+LEG*Math.sin(tb) + 2; bly=hipY+LEG*Math.cos(tb)+13;
+    flx= hipX+LEG*Math.sin(tf); fly=hipY+LEG*Math.cos(tf)+7;
     const ab=-2.7, af=2.7;                                 // руки вверх-в стороны, полной длины
     bax=-shX+ARM*Math.sin(ab); bay=shY-ARM*Math.cos(ab);
     fax= shX+ARM*Math.sin(af); fay=shY-ARM*Math.cos(af);
-    baBend=-3; faBend=3; blBend=-6; flBend=-6;             // колени согнуты
+    baBend=-3; faBend=3; blBend=-5; flBend=-10;             // колени согнуты
     blPlant=0; flPlant=0;                                  // в воздухе стопы идут по ноге
   }else{
     blx=-hipX+footX(p,stride);             bly=-Math.max(0,Math.sin(p))*lift;
@@ -315,7 +317,7 @@ function drawFinn(c){
   leg(-hipX, blx, bly, blBend, blPlant);    // ближняя нога
 
   // наклон штанин = направление соответствующей ноги (шаг + прыжок)
-  const pantA=(fx,hx,fyv)=> clamp(Math.atan2(-(fx-hx),(fyv-13)-hipY)*0.7,-0.7,0.7);
+  const pantA=(fx,hx,fyv)=> clamp(Math.atan2(-(fx-hx),(fyv-13)-hipY)*0.7,-0.6,0.6);
   const angL=pantA(blx,-hipX,bly), angR=pantA(flx,hipX,fly);
 
   capRR(-13,-46,26,15,3, shorts, OUT, true, 3, 0.88 + 0.15 * angL, angL, angR);    // шорты: штанины наклоняются за ногами
@@ -328,56 +330,57 @@ function drawFinn(c){
   ctx.beginPath(); ctx.moveTo(1.0,-73.5); ctx.quadraticCurveTo(4,-72.6,7,-73.5); ctx.stroke();  // спокойный рот
 }
 
-// Джейк — стоит на двух ногах, большие глаза, острые уши (по референсу)
+// Джейк — тело-прямоугольник, конечности и анимация как у Финна (жёлтый, без обуви), круглые уши, крупные глаза
 function drawJake(c){
-  const body='#f2b63e', belly='#f9d27a', OUT=OUTLINE, nose='#23232a';
+  ctx.translate(0,10)
+  const body='#f2b63e', OUT=OUTLINE;
   const p=c.walk, mv=c.moving, air=c.grounded?0:1;
-  const stride=7*mv, lift=6*mv, asw=4*mv;
-  const hipY=-24, hipX=6, shY=-46, shX=13;
+  const stride=c.stepLen*mv, lift=7*mv, asw=8*mv;
+  const hipY=-24, hipX=8, shY=-50, shX=15;
 
-  let blx,bly, flx,fly, bax,bay, fax,fay;
+  let blx,bly, flx,fly, bax,bay, fax,fay, baBend, faBend, blBend, flBend;
+
   if(air){
-    blx=-hipX-3; bly=-14; flx=hipX+5; fly=-6;
-    bax=-shX-6; bay=-56; fax=shX+7; fay=-58;
+    const LEG=24, ARM=28;                                  // натуральные длины — конечности не укорачиваются
+    const tb=-0.7, tf=0.5;                                 // углы ног в прыжке
+    blx=-hipX+LEG*Math.sin(tb); bly=hipY+LEG*Math.cos(tb);
+    flx= hipX+LEG*Math.sin(tf); fly=hipY+LEG*Math.cos(tf);
+    const ab=-2.7, af=2.7;                                 // руки вверх-в стороны
+    bax=-shX+ARM*Math.sin(ab); bay=shY+ARM*Math.cos(ab);
+    fax= shX+ARM*Math.sin(af); fay=shY+ARM*Math.cos(af);
+    baBend=-3; faBend=3; blBend=-6; flBend=-6;             // колени согнуты
   }else{
-    blx=-hipX+Math.cos(p)*stride;          bly=-Math.max(0,Math.sin(p))*lift;
-    flx= hipX+Math.cos(p+Math.PI)*stride;  fly=-Math.max(0,Math.sin(p+Math.PI))*lift;
-    bax=-shX-1+Math.cos(p+Math.PI)*asw;    bay=-30+Math.max(0,Math.sin(p+Math.PI))*2;
-    fax= shX+1+Math.cos(p)*asw;            fay=-30+Math.max(0,Math.sin(p))*2;
+    blx=-hipX+footX(p,stride);             bly=-Math.max(0,Math.sin(p))*lift;
+    flx= hipX+footX(p+Math.PI,stride);     fly=-Math.max(0,Math.sin(p+Math.PI))*lift;
+    bly += terrain(c.x + c.facing*blx) - c.y -5;   // стопа на реальную землю под ней (наклон)
+    fly += terrain(c.x + c.facing*flx) - c.y -5;
+    const sb= Math.cos(p)*asw, sf=-Math.cos(p)*asw;       // руки маятником в противофазе ногам
+    bax=-shX-1+sb;  bay=-26 - Math.max(0,sb)*0.45;
+    fax= shX+1+sf;  fay=-26 - Math.max(0,sf)*0.45;
+    baBend=sb*0.25; faBend=sf*0.25;                        // локоть отстаёт за махом
+    blBend=-4-5*mv*Math.max(0,Math.sin(p));                // колено сгибается в фазе подъёма
+    flBend=-4-5*mv*Math.max(0,Math.sin(p+Math.PI));
   }
-  const leg=(hx,fx,fy)=>{ limb(hx,hipY,fx,fy,(fx-hx)*0.3,7,body,OUT); blob(fx,fy,4.2,body,OUT); };
-  const arm=(sx2,hx,hy,bend)=>{ limb(sx2,shY,hx,hy,bend,6,body,OUT); blob(hx,hy,4,body,OUT); };
-  // острое ухо торчком, с флоппи-дрожанием
-  const ear=(bx,dir)=>{
-    const j=Math.sin(T*3+dir)*1.4 + mv*Math.sin(p+1)*1.4;
-    const tx=bx+dir*7+j;
-    ctx.beginPath();
-    ctx.moveTo(bx-4,-56);
-    ctx.quadraticCurveTo(bx+dir*3,-66, tx,-73);
-    ctx.quadraticCurveTo(bx+dir*6,-62, bx+5,-55);
-    ctx.closePath();
-    ctx.lineWidth=OUTLINE_W; ctx.strokeStyle=OUT; ctx.stroke(); ctx.fillStyle=body; ctx.fill();
-  };
 
-  limb(-14,-22, -21, -26+Math.sin(T*5)*3, -5, 5, body, OUT);   // хвост
-  ear(-3,-1);                                  // дальнее ухо
-  arm(-shX, bax, bay, 5);                      // дальняя рука
-  leg(-hipX, blx, bly);                        // дальняя нога
+  const leg=(hx,fx,fy,bend)=>{ limb(hx,hipY,fx,fy,bend,2,body,OUT); };   // нога как у Финна, без ботинка/носка
+  const arm=(sx2,hx,hy,bend)=>{ limb(sx2,shY,hx,hy,bend,2,body,OUT); };  // рука как у Финна, одним цветом
 
-  bodyRR(-15,-60,30,46,15, body, OUT);         // тело + голова (груша)
-  ctx.beginPath(); ctx.ellipse(2,-26,10,13,0,0,Math.PI*2); ctx.fillStyle=belly; ctx.fill();  // живот
+  arm(shX, fax, fay, faBend);                 // дальняя рука (за корпусом)
+  leg(-hipX, blx, bly, blBend);               // дальняя нога
+  leg( hipX, flx, fly, flBend);               // ближняя нога
 
-  leg( hipX, flx, fly);                        // ближняя нога
-  arm(shX, fax, fay, -5);                      // ближняя рука
+  blob(-12,-62,5, body, OUT);                 // круглое ухо слева (до тела — корпус скроет внутренний шов)
+  blob( 12,-62,5, body, OUT);                 // круглое ухо справа
+  bodyRR(-15,-70,30,46,15, body, OUT);        // тело + голова — скруглённый прямоугольник
+  arm(-shX, bax, bay, baBend);                // ближняя рука (перед корпусом)
 
-  bodyRR(5,-46,21,15,8, body, OUT);            // выступающая морда
-  blob(24,-41,3.6, nose, OUT);                 // нос
-  ctx.strokeStyle=OUT; ctx.lineWidth=1.8; ctx.lineCap='round';
-  ctx.beginPath(); ctx.moveTo(23,-38); ctx.quadraticCurveTo(13,-30,5,-35); ctx.stroke();  // рот
-  blob(7,-52,6.2,'#fff',OUT); blob(17,-52,6.2,'#fff',OUT);    // большие глаза
-  blob(9,-52,2.6,'#222',null); blob(19,-52,2.6,'#222',null);
-  blob(10.5,-53.5,1,'#fff',null); blob(20.5,-53.5,1,'#fff',null);  // блики
-  ear(11,1);                                   // ближнее ухо
+  const eyeR = 4.8
+  blob(-7,-56,eyeR,'#22303f',OUT); blob(8,-56,eyeR,'#22303f',OUT);              // крупные глаза: белый круг
+  blob(-6,-55.5,eyeR-0.2, '#fff',null); blob(9,-55.5,eyeR-0.2,'#fff',null);  // чёрный зрачок поверх
+
+  limb(-4,-45, 6,-45, -10, 4, body, OUT);                              // морда — полуарка (как маленький limb) вокруг рта
+  ctx.strokeStyle=OUT; ctx.lineWidth=1.4; ctx.lineCap='round';
+  blob(1,-47,2,'#23232a',OUT,0.667);                                   // чёрный нос — эллипс 3×2
 }
 
 function drawChar(c,isLeader){
