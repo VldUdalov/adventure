@@ -270,7 +270,7 @@ function drawZombieHalf(p){
 }
 function drawStink(s){
   const sx=s.x-camX, a=Math.min(0.4, s.life*0.42);
-  const cy=s.y + s.r*0.35;                                    // центр плотности ниже середины -> таяние кверху
+  const cy=s.y + s.r*0.6;                                    // центр плотности ниже середины -> таяние кверху
   const g=ctx.createRadialGradient(sx, cy, s.r*0.12, sx, cy, s.r*1.2);
   g.addColorStop(0,   'rgba(106,112,56,'+a.toFixed(3)+')');   // плотный низ-центр
   g.addColorStop(0.6, 'rgba(106,112,56,'+(a*0.55).toFixed(3)+')');
