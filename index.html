@@ -34,7 +34,7 @@
   #bRight{left:calc(120px + env(safe-area-inset-left));bottom:calc(24px + env(safe-area-inset-bottom));width:88px;height:88px;font-size:40px;}
   #bJump {right:calc(24px + env(safe-area-inset-right));bottom:calc(24px + env(safe-area-inset-bottom));width:110px;height:110px;font-size:20px;}
   #bSwap {right:calc(36px + env(safe-area-inset-right));bottom:calc(150px + env(safe-area-inset-bottom));width:88px;height:60px;font-size:16px;}
-  #bUp   {right:calc(146px + env(safe-area-inset-right));bottom:calc(30px + env(safe-area-inset-bottom));width:90px;height:90px;font-size:18px;}</style>
+  #bUp   {left:calc(69px + env(safe-area-inset-left));bottom:calc(120px + env(safe-area-inset-bottom));width:90px;height:90px;font-size:18px;}</style>
 </head>
 <body>
 <div id="wrap">
@@ -67,7 +67,7 @@ function watch(a, b){
   else _watch['#'+(_watchN++)] = a;                                              // watch(mw) — без имени
 }
 const OUTLINE = '#23272e';   // тёмный контур, как на референсе
-const OUTLINE_W = 2.0;       // толщина чёрной обводки персонажей
+let OUTLINE_W = 2.0;       // толщина чёрной обводки персонажей
 
 // горизонтальный сдвиг стопы по фазе шага: мах — дуга вперёд, опора — линейно назад
 // (на опоре стопа идёт назад с постоянной скоростью = скорости тела → не скользит)
@@ -213,7 +213,7 @@ for(let i=0;i<50;i++){
 function makeChar(type,x){
   return {
     type, x, y:terrain(x), vx:0, vy:0, grounded:true, facing:1,
-    walk:0, moving:0, land:0, atk:0, afterAtk:0,
+    walk:0, moving:0, land:0, atk:0, afterAtk:0, atkHit:false, atkType:1,
     stepLen: 15,                        // длина шага: фаза привязана к пути → стопа не скользит (Джейк теперь тоже)
     speed: type==='finn'?100:115,
     jumpV: type==='finn'?670:710,
@@ -223,7 +223,61 @@ function makeChar(type,x){
 let finn = makeChar('finn',300);
 let jake = makeChar('jake',225);
 let leader = finn, follower = jake;
+let bananas = [];                    // враги: зомби-бананы, бегут влево через экран
+let bananaTimer = 0.6;
+const BANANA_STRIDE = 6;             // длина шага зомби (локальная) — для бега без проскальзывания
+function bananaColor(){ const r=180+(Math.random()*42|0), g=190+(Math.random()*42|0), b=55+(Math.random()*60|0); return 'rgb('+r+','+g+','+b+')'; }
+function spawnBanana(){
+  const x = camX + W + 30 + Math.random()*70;                 // за правым краем видимости
+  bananas.push({ type:'banana', x, y:terrain(x), facing:-1, walk:Math.random()*6, moving:1, grounded:true,
+                 scale: 1.5 * (0.8+Math.random()*0.45), color: bananaColor(), speed: 70+Math.random()*70 });
+}
 
+let pieces=[], juice=[];             // половинки разрубленных зомби + брызги сока
+let drips=[], stink=[];              // зелёные капли изо рта и коричнево-зелёный пар (вонь) зомби
+function spawnJuice(x,y,scale){
+  const n=12+(Math.random()*10|0);
+  for(let i=0;i<n;i++){ const a=Math.random()*6.283, sp=50+Math.random()*200;
+    juice.push({ x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp-100, r:(0.2+Math.random()*2.6)*Math.min(scale,1.8), life:0.45+Math.random()*0.55 }); }
+}
+function cutZombie(b){
+  const cy=b.y-32*b.scale;           // линия разреза (середина тела)
+  pieces.push({ half:'top',    x:b.x, y:cy, vx:-160+Math.random()*40, vy:-300-Math.random()*100, rot:0, rotV:-4-Math.random()*10, scale:b.scale, color:b.color, life:3 });
+  pieces.push({ half:'bottom', x:b.x, y:cy, vx: -10+Math.random()*40, vy:-160-Math.random()*80,  rot:0, rotV: 4+Math.random()*9, scale:b.scale, color:b.color, life:3 });
+  spawnJuice(b.x, cy, b.scale);
+}
+function drawZombieHalf(p){
+  const body=p.color, OUT=OUTLINE;
+  ctx.save();
+  ctx.translate(p.x-camX, p.y); ctx.rotate(p.rot); ctx.scale(p.scale,p.scale);
+  const ow=OUTLINE_W; OUTLINE_W=ow/p.scale;                 // обводка не масштабируется
+  ctx.save();
+  ctx.beginPath();
+  if(p.half==='top') ctx.rect(-30,-40,60,40); else ctx.rect(-30,0,60,44);   // оставить только свою половину
+  ctx.clip();
+  ctx.translate(0,32);                                       // система стоп -> разрез в 0
+  roundTopRR(-12,-58,24,46,12, body, OUT);
+  if(p.half==='bottom'){ limb(-6,-18,-7,2,-2,2,body,OUT); limb(6,-18,7,2,2,2,body,OUT); }
+  ctx.restore();
+  if(p.half==='top'){
+    ctx.translate(0,32);
+    blob(2,-50,1,'#00с000',null); blob(9,-50,1,'#00с000',null);
+   // ctx.strokeStyle=OUT; ctx.lineWidth=1.5/p.scale; ctx.lineCap='round';
+   // ctx.beginPath(); ctx.moveTo(1,-40); ctx.lineTo(4,-37); ctx.lineTo(7,-40); ctx.lineTo(10,-37); ctx.stroke();
+  }
+  OUTLINE_W=ow;
+  ctx.restore();
+}
+function drawStink(s){
+  ctx.save(); ctx.globalAlpha=Math.min(0.3, s.life*0.28);
+  ctx.beginPath(); ctx.arc(s.x-camX, s.y, s.r, 0, 6.283); ctx.fillStyle='#6e7038'; ctx.fill();   // коричнево-зелёный пар (вонь)
+  ctx.restore();
+}
+function drawJuice(j){
+  ctx.save(); ctx.globalAlpha=Math.min(1,j.life*2.2);
+  ctx.beginPath(); ctx.arc(j.x-camX, j.y, j.r, 0, 6.283); ctx.fillStyle='#4fb02e'; ctx.fill();
+  ctx.restore();
+}
 const GRAV = 2100;
 const ATK_DUR = 0.22;   // длительность взмаха меча (сек)
 const AFTER_DUR = 0.14; // длительность возврата меча в стойку (сек)
@@ -235,9 +289,14 @@ function stepChar(c,intent,dt){
   if(intent.jump && c.grounded){ c.vy=-c.jumpV; c.grounded=false; }
   const wasAtk = (c.atk||0) > 0;
   c.atk = Math.max(0, (c.atk||0) - dt);                               // таймер взмаха меча
-  if(intent.attack && c.type==='finn' && c.atk<=0){ c.atk = ATK_DUR; c.afterAtk = 0; }  // старт удара (только управляемый Финн)
-  else if(wasAtk && c.atk<=0) c.afterAtk = 1;                         // удар закончился -> возврат меча в стойку
-  else if (c.atk<=0) c.afterAtk = Math.max(0, (c.afterAtk||0) - dt/AFTER_DUR);      // возврат затухает 1 -> 0
+  if(intent.attack && c.type==='finn'){ c.atkType = 1 - (c.atkType||0); c.atk = ATK_DUR; c.afterAtk = 0; c.atkHit=false; }  // удар; нажатие во время c.atk>0 -> следующий тип (чередуются)
+  else if(wasAtk && c.atk<=0) {
+    c.afterAtk = 1;                         // удар закончился -> возврат меча в стойку
+  }
+  else if (c.atk<=0) {
+    c.afterAtk = Math.max(0, (c.afterAtk||0) - dt/AFTER_DUR);      // возврат затухает 1 -> 0
+    c.atkType = 1
+  }
   c.vy += GRAV*dt;
   c.y += c.vy*dt;
 
@@ -347,13 +406,16 @@ function drawFinn(c, isLeader){
   if(isLeader){
     if(c.atk>0){                                                 // взмах: занос над головой -> удар сверху вниз
       const ap=1-c.atk/ATK_DUR, L=(u,v)=>u+(v-u)*ap;
-      gripX=L(14,4); gripY=L(-98,-26); swordAng=L(-2.5,0.5);
+      if(c.atkType===1){ gripX=L(-16,16); gripY=L(-66,-40); swordAng=L(-2.9,0.3); }   // ТИП 2 — горизонтальный слэш (настрой углы сам)
+      else             { gripX=L(14,4); gripY=L(-98,-26); swordAng=L(-2.5,0.5); }  // ТИП 1 — занос над головой -> удар сверху вниз
     }else if(c.afterAtk>0){                                       // возврат меча из удара в стойку (afterAtk 1->0)
       const ar=1-c.afterAtk, L=(u,v)=>u+(v-u)*ar;
-      gripX=L(4,18); gripY=L(-26,-42); swordAng=L(0.5,-0.7);
+      if(c.atkType===1){ gripX=L(16,18); gripY=L(-40,-42); swordAng=L(0.3,-0.7); }   // возврат типа 2
+      else            { gripX=L(4,18);  gripY=L(-26,-42); swordAng=L(0.5,-0.7); }  // возврат типа 1
     }else{
       gripX=18; gripY=-42; swordAng=-0.7;                        // готовая стойка двумя руками
     }
+
     const cs=Math.cos(swordAng), sn=Math.sin(swordAng);
     bax=gripX-1*cs;  bay=gripY-1*sn;                            // ближняя рука у гарды
     fax=gripX-7*cs;  fay=gripY-7*sn;                            // дальняя рука ниже по рукояти
@@ -403,17 +465,19 @@ function drawFinn(c, isLeader){
   archRR(-13,-65,26,24,1, 2, shirt, OUT);    // футболка — верх/низ дугами вниз (5 = прогиб)
   if(isLeader) arm(shX, fax, fay, faBend);    // дальняя рука к рукояти (двумя руками, перед телом)
 
-  k= c.atk/ATK_DUR
-  back = c.afterAtk
-
-  lenK = k>0 ? 1 - Math.abs(0.5 - k) : back > 0 ? (1 - back * 0.5) :1
-  if(isLeader) drawSword(gripX, gripY, swordAng, k , lenK);  // меч двумя руками
-  
   blob(1,-76,10, skin, OUT, 0.7);                  // лицо
   blob(-3,-78,1.0,'#22303f',null); blob(8,-78,1.0,'#22303f',null);  // глаза
   ctx.strokeStyle='#22303f'; ctx.lineWidth=1.0; ctx.lineCap='round';
   ctx.beginPath(); ctx.moveTo(1.0,-73.5); ctx.quadraticCurveTo(4,-72.6,7,-73.5); ctx.stroke();  // спокойный рот
 
+  if(isLeader) {
+    k= c.atk/ATK_DUR
+    back = c.afterAtk
+
+    lenK = k > 0 ? 1 - Math.abs(0.5 - k) : back > 0 ? (1 - back * 0.5) :1
+    perspective = (k > 0) && (c.atkType == 1) ? (1-k) : k
+    drawSword(gripX, gripY, swordAng, perspective , lenK);  // меч двумя руками
+  }
   arm(-shX, bax, bay, baBend);                // ближняя рука к рукояти
   ctx.restore();   // конец наклона корпуса
  
@@ -472,6 +536,38 @@ function drawJake(c){
   blob(1,-47,2,'#23232a',OUT,0.667);                                   // чёрный нос — эллипс 3×2
 }
 
+// прямоугольник со скруглёнными ТОЛЬКО верхними углами (тело банана)
+function roundTopRR(x,y,w,h,r,color,oc){
+  r=Math.min(r,w/2,h);
+  ctx.beginPath();
+  ctx.moveTo(x,y+h);
+  ctx.lineTo(x,y+r); ctx.arcTo(x,y,x+r,y,r);
+  ctx.lineTo(x+w-r,y); ctx.arcTo(x+w,y,x+w,y+r,r);
+  ctx.lineTo(x+w,y+h);
+  ctx.closePath();
+  if(oc){ ctx.lineWidth=OUTLINE_W; ctx.strokeStyle=oc; ctx.stroke(); }
+  ctx.fillStyle=color; ctx.fill();
+}
+// зомби-банан: конечности как у Джейка, руки вытянуты вперёд, злая морда
+function drawBanana(c){
+  const s=c.scale||1;
+  ctx.scale(s,s);                                            // размер зомби (2x + рандом)
+  ctx.translate(0,2); ctx.rotate(0.16); ctx.translate(0,-2); // тело наклонено чуть вперёд (вокруг стоп)
+  const ow=OUTLINE_W; OUTLINE_W=ow/s;                        // обводка НЕ масштабируется (тело — да)
+  const body=c.color||'#c7d15a', OUT=OUTLINE, W2=2;
+  const p=c.walk, sway=Math.sin(T*2.2 + c.x*0.1)*1.4;        // покачивание рук
+  const shY=-38, shX=11, hipY=-18, hipX=6, lift=4;
+  const blx=-hipX+footX(p, BANANA_STRIDE),         bfy=2-Math.max(0,Math.sin(p))*lift;        // опора линейно назад -> не скользит
+  const flx= hipX+footX(p+Math.PI, BANANA_STRIDE), ffy=2-Math.max(0,Math.sin(p+Math.PI))*lift;
+  limb(shX, shY, 28, shY-3+sway, 2, W2, body, OUT);          // дальняя рука вперёд (за телом)
+  limb(-hipX, hipY, blx, bfy, -2, W2, body, OUT);            // дальняя нога
+  limb( hipX, hipY, flx, ffy,  2, W2, body, OUT);            // ближняя нога
+  roundTopRR(-12,-58,24,46,12, body, OUT);                   // тело: скруглён только верх
+  limb(-shX * 0.5 , shY+2, 27, shY+4+sway, -2, W2, body, OUT);        // ближняя рука вперёд (перед телом)
+  blob(2,-48,1,'#00c000',null); blob(9,-48,1,'#00c000',null);   // глаза-точки (как у Финна)
+  blob(3,-42,2,'#000000',null);  // злой оскал
+  OUTLINE_W=ow;                                              // вернуть толщину обводки
+}
 function drawChar(c,isLeader){
   const sx=c.x-camX, sy=c.y;
   const air = c.grounded?0:clamp((terrain(c.x)-c.y)/120,0,1);
@@ -481,7 +577,7 @@ function drawChar(c,isLeader){
   ctx.globalAlpha=0.5*(1-air*0.7);
   ctx.fillStyle='#10400f';
   const shAng=Math.atan((terrain(c.x+4)-terrain(c.x-4))/8);     // наклон тени = наклон земли по x
-  ctx.beginPath(); ctx.ellipse(sx, terrain(c.x)+4, 20-air*8, 4-air*1.5, shAng, 0, Math.PI*2); ctx.fill();
+  const shS=c.scale||1; ctx.beginPath(); ctx.ellipse(sx, terrain(c.x)+4, (20-air*8)*shS, (4-air*1.5)*shS, shAng, 0, Math.PI*2); ctx.fill();
   ctx.restore();
 
   // тело (покачивание при ходьбе; без деформации в прыжке)
@@ -490,7 +586,7 @@ function drawChar(c,isLeader){
   const bob = (c.grounded && c.moving>0.1) ? -Math.abs(Math.sin(c.walk))*3 : 0;  // покачивание только при ходьбе
   ctx.translate(0,bob);
   ctx.scale(c.facing,1);
-  if(c.type==='finn') drawFinn(c, isLeader); else drawJake(c);
+  if(c.type==='finn') drawFinn(c, isLeader); else if(c.type==='banana') drawBanana(c); else drawJake(c);
   ctx.restore();
 
   // указатель «ведущий» (экранные координаты, без зеркала)
@@ -565,6 +661,25 @@ function update(dt){
   camX += (camTargetX-camX)*Math.min(1,dt*6);
 
   for(const cl of clouds){ cl.x-=cl.spd*dt; if(cl.x<-200) cl.x=W+200; }
+  bananaTimer -= dt;
+  if(bananaTimer<=0){ spawnBanana(); bananaTimer = 1.4 + Math.random()*2.2; }
+  for(const b of bananas){
+    b.x -= b.speed*dt; b.y = terrain(b.x); b.walk += b.speed*dt*Math.PI/(2*BANANA_STRIDE*b.scale);   // шаг = путь -> без проскальзывания
+    const ms=Math.min(b.scale,1.8);
+    if(Math.random()<dt*3.4) stink.push({ x:b.x+(Math.random()-0.5)*18*b.scale, y:b.y-(18+Math.random()*32)*b.scale, vx:(Math.random()-0.5)*8, vy:-26-Math.random()*18, r:(3+Math.random()*10)*ms, life:1.4+Math.random()*0.8, grow:9+Math.random()*7 });   // пар-вонь
+  }
+  bananas = bananas.filter(b => b.x > camX - 70);   // ушли за левый край -> уничтожить
+  if(leader.type==='finn' && leader.atk>0 && leader.atk<ATK_DUR*0.7 && !leader.atkHit){   // удар мечом разрубает зомби
+    leader.atkHit=true;
+    for(let i=bananas.length-1;i>=0;i--){ const b=bananas[i], dx=(b.x-leader.x)*leader.facing;
+      if(dx>-15 && dx<100){ cutZombie(b); bananas.splice(i,1); } }
+  }
+  for(const pc of pieces){ pc.vy+=GRAV*dt; pc.x+=pc.vx*dt; pc.y+=pc.vy*dt; pc.rot+=pc.rotV*dt; pc.life-=dt; }
+  pieces = pieces.filter(pc => pc.life>0 && pc.y<H+260);
+  for(const j of juice){ j.vy+=GRAV*dt; j.x+=j.vx*dt; j.y+=j.vy*dt; j.life-=dt; }
+  juice = juice.filter(j => j.life>0);
+  for(const s of stink){ s.x+=s.vx*dt; s.y+=s.vy*dt; s.r+=s.grow*dt; s.life-=dt; }
+  stink = stink.filter(s => s.life>0 && s.x>camX-100);
   justPressed={};
 }
 // строки watch внизу экрана
@@ -595,8 +710,12 @@ function render(){
   drawHillLayer(midHill,0.55,'#8fc77c');
   drawGround();
   drawGrass();
+  for(const s of stink) drawStink(s);
+  for(const b of bananas) drawChar(b,false);
+  for(const pc of pieces) drawZombieHalf(pc);
   drawChar(follower,false);
   drawChar(leader,true);
+  for(const j of juice) drawJuice(j);
   drawWatch();
 }
 
