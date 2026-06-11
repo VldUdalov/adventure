@@ -34,7 +34,7 @@
   #bRight{left:calc(120px + env(safe-area-inset-left));bottom:calc(24px + env(safe-area-inset-bottom));width:88px;height:88px;font-size:40px;}
   #bJump {right:calc(24px + env(safe-area-inset-right));bottom:calc(24px + env(safe-area-inset-bottom));width:110px;height:110px;font-size:20px;}
   #bSwap {right:calc(36px + env(safe-area-inset-right));bottom:calc(150px + env(safe-area-inset-bottom));width:88px;height:60px;font-size:16px;}
-  #bAtk  {right:calc(146px + env(safe-area-inset-right));bottom:calc(30px + env(safe-area-inset-bottom));width:90px;height:90px;font-size:17px;}</style>
+  #bUp   {right:calc(146px + env(safe-area-inset-right));bottom:calc(30px + env(safe-area-inset-bottom));width:90px;height:90px;font-size:18px;}</style>
 </head>
 <body>
 <div id="wrap">
@@ -51,6 +51,7 @@
   <div id="bRight" class="btn round" data-k="ArrowRight">&#9654;</div>
   <div id="bJump"  class="btn round" data-k="Space">МЕЧ</div>
   <div id="bSwap"  class="btn"       data-k="KeyX">СМЕНА</div>
+  <div id="bUp"    class="btn round" data-k="ArrowUp">ПРЫЖОК</div>
 </div>
 <script>
 const canvas = document.getElementById('game');
@@ -212,7 +213,7 @@ for(let i=0;i<50;i++){
 function makeChar(type,x){
   return {
     type, x, y:terrain(x), vx:0, vy:0, grounded:true, facing:1,
-    walk:0, moving:0, land:0, atk:0,
+    walk:0, moving:0, land:0, atk:0, afterAtk:0,
     stepLen: 15,                        // длина шага: фаза привязана к пути → стопа не скользит (Джейк теперь тоже)
     speed: type==='finn'?100:115,
     jumpV: type==='finn'?670:710,
@@ -224,15 +225,19 @@ let jake = makeChar('jake',225);
 let leader = finn, follower = jake;
 
 const GRAV = 2100;
-const ATK_DUR = 0.32;   // длительность взмаха меча (сек)
+const ATK_DUR = 0.22;   // длительность взмаха меча (сек)
+const AFTER_DUR = 0.14; // длительность возврата меча в стойку (сек)
 function stepChar(c,intent,dt){
   if(intent.move!==0) c.facing=intent.move;
   c.vx = intent.move*c.speed;
   c.x = clamp(c.x + c.vx*dt, 20, LEVEL_W-20);
 
   if(intent.jump && c.grounded){ c.vy=-c.jumpV; c.grounded=false; }
+  const wasAtk = (c.atk||0) > 0;
   c.atk = Math.max(0, (c.atk||0) - dt);                               // таймер взмаха меча
-  if(intent.attack && c.type==='finn' && c.atk<=0) c.atk = ATK_DUR;   // старт удара (только управляемый Финн)
+  if(intent.attack && c.type==='finn' && c.atk<=0){ c.atk = ATK_DUR; c.afterAtk = 0; }  // старт удара (только управляемый Финн)
+  else if(wasAtk && c.atk<=0) c.afterAtk = 1;                         // удар закончился -> возврат меча в стойку
+  else if (c.atk<=0) c.afterAtk = Math.max(0, (c.afterAtk||0) - dt/AFTER_DUR);      // возврат затухает 1 -> 0
   c.vy += GRAV*dt;
   c.y += c.vy*dt;
 
@@ -284,7 +289,7 @@ function followIntent(self,lead){
 // ---------- персонажи: рисование ----------
 // Финн — тонкие конечности, голова-скруглённый прямоугольник
 // меч: рукоять в (hx,hy), клинок направлен вдоль угла ang (экранные коорд, +x вперёд)
-function drawSword(hx,hy,ang,atk){
+function drawSword(hx,hy,ang,atk, lenK){
   ctx.save();
   ctx.translate(hx,hy); ctx.rotate(ang);
   ctx.lineCap='round';
@@ -293,7 +298,7 @@ function drawSword(hx,hy,ang,atk){
   bodyRR(-1,-7,3,16,1,'#dbe2ec',OUTLINE);                    // гарда (крестовина)
   perspective = atk <= 0 ? 0 : (0.5 - atk) * 4 
   ctx.beginPath();                                           // клинок
-  ctx.moveTo(2,-3.2); ctx.lineTo(54,-3.2 - perspective); ctx.lineTo(60,0); ctx.lineTo(54,3.2 + perspective); ctx.lineTo(2,3.2); ctx.closePath();
+  ctx.moveTo(2,-3.2); ctx.lineTo(54 * lenK,-3.2 - perspective); ctx.lineTo(60 * lenK,0); ctx.lineTo(54 * lenK,3.2 + perspective); ctx.lineTo(2,3.2); ctx.closePath();
   ctx.lineWidth=OUTLINE_W; ctx.strokeStyle=OUTLINE; ctx.stroke(); ctx.fillStyle='#dbe2ec'; ctx.fill();
   ctx.beginPath(); ctx.moveTo(4,0); ctx.lineTo(26,0); ctx.lineWidth=1; ctx.strokeStyle='#aeb8c6'; ctx.stroke();  // дол
   ctx.restore();
@@ -340,19 +345,13 @@ function drawFinn(c, isLeader){
   let swordAng=0, gripX=0, gripY=0;
 
   if(isLeader){
-    if(c.atk>0){
-      k = c.atk/ATK_DUR
-      const attackPhase= 0.3
-      if (k > attackPhase){
-        const ap=(1.0 - k)/0.6, L=(u,v)=>u+(v-u) *ap;
-        gripX=L(14, 4); gripY=L(-98,-26); swordAng=L(-2.5, 0.5);   // занос над головой -> удар сверху вниз
-      }
-      else {
-        const am=(attackPhase-k)/attackPhase, L2=(u,v)=>u+(v-u) *am;
-        gripX=L2(4, 18); gripY=L2(-26,-42); swordAng=L2(0.5, -0.7);   // занос над головой -> удар сверху вниз
-      }
+    if(c.atk>0){                                                 // взмах: занос над головой -> удар сверху вниз
+      const ap=1-c.atk/ATK_DUR, L=(u,v)=>u+(v-u)*ap;
+      gripX=L(14,4); gripY=L(-98,-26); swordAng=L(-2.5,0.5);
+    }else if(c.afterAtk>0){                                       // возврат меча из удара в стойку (afterAtk 1->0)
+      const ar=1-c.afterAtk, L=(u,v)=>u+(v-u)*ar;
+      gripX=L(4,18); gripY=L(-26,-42); swordAng=L(0.5,-0.7);
     }else{
-
       gripX=18; gripY=-42; swordAng=-0.7;                        // готовая стойка двумя руками
     }
     const cs=Math.cos(swordAng), sn=Math.sin(swordAng);
@@ -360,8 +359,13 @@ function drawFinn(c, isLeader){
     fax=gripX-7*cs;  fay=gripY-7*sn;                            // дальняя рука ниже по рукояти
     baBend=9; faBend=-9;                                        // руки согнуты (локти в стороны)
   }
+  // при ударе колени разгибаются и тело приподнимается, затем возврат
+  let extend = 0;
+  if(c.atk>0) extend = c.atk/ATK_DUR;   // быстро нарастает в начале свинга и держится
+  const rise = 6*extend, hipDraw = hipY - rise;            // таз приподнимается -> ноги выпрямляются к тем же стопам
+  blBend *= (1-extend); flBend *= (1-extend);              // колени разгибаются
   const leg=(hx,fx,fy,bend,plant)=>{
-    limb(hx,hipY,fx,fy-13,bend,2,skin,OUT);                // тонкая нога до щиколотки
+    limb(hx,hipDraw,fx,fy-13,bend,2,skin,OUT);             // нога от приподнятого таза (при ударе)
     // угол стопы: на земле (plant=1) — параллельно склону; в махе/воздухе — вдоль голени (касательная)
     const vx=fx-hx, vy=(fy-13)-hipY, Ll=Math.hypot(vx,vy)||1, nlx=-vy/Ll, nly=vx/Ll;
     const ccx=(hx+fx)/2+nlx*bend, ccy=(hipY+(fy-13))/2+nly*bend;
@@ -379,7 +383,7 @@ function drawFinn(c, isLeader){
     limb2(sx2,shY,hx,hy,bend,2,shirt,skin,OUT,0.4);};   // рукав (футболка) сверху + кожа снизу
 
   if(!isLeader) {
-    drawSword(-16,-72, 0.7, -1);      // меч за спиной (когда Финном не управляют)
+    ctx.save(); ctx.scale(c.facing,1); drawSword(-16,-72, 0.7, -1, 1); ctx.restore();   // меч за спиной - без зеркала при смене направления
     arm(shX, fax, fay, faBend);   // дальняя рука за корпусом (когда меч за спиной)
   }
 
@@ -390,12 +394,20 @@ function drawFinn(c, isLeader){
   const pantA=(fx,hx,fyv)=> clamp(Math.atan2(-(fx-hx),(fyv-13)-hipY)*0.7,-0.6,0.6);
   const angL=pantA(blx,-hipX,bly), angR=pantA(flx,hipX,fly);
 
+  // наклон корпуса: с мечом - немного назад; при ударе - сначала назад, потом вперёд
+  let lean = 0;
+  if(isLeader){ lean = -0.12; if(c.atk>0){ const ap2=1-c.atk/ATK_DUR; lean = -0.2 + 0.5*ap2; } else if(c.afterAtk>0){ lean = -0.12 + 0.42*c.afterAtk; } }
+  ctx.save(); ctx.translate(0,-28-rise); ctx.rotate(lean); ctx.translate(0,28);   // наклон + подъём верхней части вокруг бёдер
   capRR(-13,-46,26,15,3, shorts, OUT, true, 3, 0.88 + 0.15 * angL, angL, angR);    // шорты: штанины наклоняются за ногами
   capRR(-14,-90,26,32,11, hat, OUT, false, 2, 0.9);   // шапка-прямоугольник с ушками
   archRR(-13,-65,26,24,1, 2, shirt, OUT);    // футболка — верх/низ дугами вниз (5 = прогиб)
   if(isLeader) arm(shX, fax, fay, faBend);    // дальняя рука к рукояти (двумя руками, перед телом)
 
-  if(isLeader) drawSword(gripX, gripY, swordAng, c.atk/ATK_DUR);  // меч двумя руками
+  k= c.atk/ATK_DUR
+  back = c.afterAtk
+
+  lenK = k>0 ? 1 - Math.abs(0.5 - k) : back > 0 ? (1 - back * 0.5) :1
+  if(isLeader) drawSword(gripX, gripY, swordAng, k , lenK);  // меч двумя руками
   
   blob(1,-76,10, skin, OUT, 0.7);                  // лицо
   blob(-3,-78,1.0,'#22303f',null); blob(8,-78,1.0,'#22303f',null);  // глаза
@@ -403,6 +415,7 @@ function drawFinn(c, isLeader){
   ctx.beginPath(); ctx.moveTo(1.0,-73.5); ctx.quadraticCurveTo(4,-72.6,7,-73.5); ctx.stroke();  // спокойный рот
 
   arm(-shX, bax, bay, baBend);                // ближняя рука к рукояти
+  ctx.restore();   // конец наклона корпуса
  
 }
 
