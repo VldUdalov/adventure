@@ -236,9 +236,9 @@ function spawnBanana(){
 let pieces=[], juice=[];             // половинки разрубленных зомби + брызги сока
 let drips=[], stink=[];              // зелёные капли изо рта и коричнево-зелёный пар (вонь) зомби
 function spawnJuice(x,y,scale){
-  const n=12+(Math.random()*10|0);
+  const n=22+(Math.random()*10|0);
   for(let i=0;i<n;i++){ const a=Math.random()*6.283, sp=50+Math.random()*200;
-    juice.push({ x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp-100, r:(0.2+Math.random()*2.6)*Math.min(scale,1.8), life:0.45+Math.random()*0.55 }); }
+    juice.push({ x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp-300, r:(0.2+Math.random()*1.6)*Math.min(scale,1.8), life:0.45+Math.random()*0.55 }); }
 }
 function cutZombie(b){
   const cy=b.y-32*b.scale;           // линия разреза (середина тела)
@@ -269,13 +269,17 @@ function drawZombieHalf(p){
   ctx.restore();
 }
 function drawStink(s){
-  ctx.save(); ctx.globalAlpha=Math.min(0.3, s.life*0.28);
-  ctx.beginPath(); ctx.arc(s.x-camX, s.y, s.r, 0, 6.283); ctx.fillStyle='#6e7038'; ctx.fill();   // коричнево-зелёный пар (вонь)
-  ctx.restore();
+  const sx=s.x-camX, a=Math.min(0.4, s.life*0.42);
+  const cy=s.y + s.r*0.35;                                    // центр плотности ниже середины -> таяние кверху
+  const g=ctx.createRadialGradient(sx, cy, s.r*0.12, sx, cy, s.r*1.2);
+  g.addColorStop(0,   'rgba(106,112,56,'+a.toFixed(3)+')');   // плотный низ-центр
+  g.addColorStop(0.6, 'rgba(106,112,56,'+(a*0.55).toFixed(3)+')');
+  g.addColorStop(1,   'rgba(106,112,56,0)');                  // края и верх — в прозрачность
+  ctx.save(); ctx.beginPath(); ctx.arc(sx, s.y, s.r, 0, 6.283); ctx.fillStyle=g; ctx.fill(); ctx.restore();
 }
 function drawJuice(j){
   ctx.save(); ctx.globalAlpha=Math.min(1,j.life*2.2);
-  ctx.beginPath(); ctx.arc(j.x-camX, j.y, j.r, 0, 6.283); ctx.fillStyle='#4fb02e'; ctx.fill();
+  ctx.beginPath(); ctx.arc(j.x-camX, j.y, j.r, 0, 6.283); ctx.fillStyle='#4ff02e'; ctx.fill();
   ctx.restore();
 }
 const GRAV = 2100;
