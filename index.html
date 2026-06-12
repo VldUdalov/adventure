@@ -32,7 +32,7 @@
   .btn.on{background:rgba(85,200,255,0.45);border-color:#fff;}
   #bLeft {left:calc(20px + env(safe-area-inset-left));bottom:calc(24px + env(safe-area-inset-bottom));width:88px;height:88px;font-size:40px;}
   #bRight{left:calc(120px + env(safe-area-inset-left));bottom:calc(24px + env(safe-area-inset-bottom));width:88px;height:88px;font-size:40px;}
-  #bJump {right:calc(24px + env(safe-area-inset-right));bottom:calc(24px + env(safe-area-inset-bottom));width:110px;height:110px;font-size:20px;}
+  #bJump {right:calc(24px + env(safe-area-inset-right));bottom:calc(24px + env(safe-area-inset-bottom));width:110px;height:110px;font-size:15px;}
   #bSwap {right:calc(36px + env(safe-area-inset-right));bottom:calc(150px + env(safe-area-inset-bottom));width:88px;height:60px;font-size:16px;}
   #bUp   {left:calc(69px + env(safe-area-inset-left));bottom:calc(120px + env(safe-area-inset-bottom));width:90px;height:90px;font-size:18px;}</style>
 </head>
@@ -224,7 +224,7 @@ let finn = makeChar('finn',300);
 let jake = makeChar('jake',225);
 let leader = finn, follower = jake;
 let bananas = [];                    // враги: зомби-бананы, бегут влево через экран
-let bananaTimer = 0.6;
+let bananaTimer = 0.6, bananaTimerL = 2.0;
 const BANANA_STRIDE = 6;             // длина шага зомби (локальная) — для бега без проскальзывания
 function bananaColor(){ const r=180+(Math.random()*42|0), g=190+(Math.random()*42|0), b=55+(Math.random()*60|0); return 'rgb('+r+','+g+','+b+')'; }
 function spawnBanana(){
@@ -232,9 +232,23 @@ function spawnBanana(){
   bananas.push({ type:'banana', x, y:terrain(x), facing:-1, walk:Math.random()*6, moving:1, grounded:true,
                  scale: 1.5 * (0.8+Math.random()*0.45), color: bananaColor(), speed: 70+Math.random()*70 });
 }
+function spawnBananaLeft(){                                   // зомби из-за левого края (несём Пупырку, замок не виден)
+  const x = camX - 35 - Math.random()*25;                     // чуть за левым краем экрана
+  bananas.push({ type:'banana', x, y:terrain(x), facing:1, walk:Math.random()*6, moving:1, grounded:true,
+                 scale: 1.5 * (0.8+Math.random()*0.45), color: bananaColor(), speed: 70+Math.random()*70 });
+}
 
 let pieces=[], juice=[];             // половинки разрубленных зомби + брызги сока
 let drips=[], stink=[];              // зелёные капли изо рта и коричнево-зелёный пар (вонь) зомби
+function makeLobes(){ const L=[{dx:0,dy:0,rx:17,ry:14}]; for(let i=0;i<8;i++){ const a=i/8*6.283; L.push({dx:Math.cos(a)*13, dy:Math.sin(a)*11, rx:9+Math.random()*4, ry:8+Math.random()*3}); } return L; }
+const WALL_X = 110, WALL_TOP = 120;                       // стена замка: правый край (мир) и высота верха
+const DROP_X = WALL_X-26, DROP_Y = WALL_TOP-10;           // место высадки Пупырки на стене
+let deliveredStar = null; let hint = { text:"", scale:0 };                                 // доставленная Пупырка сидит на стене
+let star = { cx: LEVEL_W * 0.5 + Math.random() * 500, cy: 110, x: LEVEL_W * 0.5 + Math.random() * 500, y: 60, carried:false, grabTimer:0, flee:0, deliver:0, lobes: makeLobes() };
+function respawnStar(){
+  star.lobes=makeLobes(); star.carried=false; star.grabTimer=0; star.flee=0; star.deliver=0;
+  const a=T*0.5, rad=75+35*Math.sin(T*0.7); star.x=star.cx+Math.cos(a)*rad; star.y=star.cy+Math.sin(a)*rad*0.55;
+}
 function spawnJuice(x,y,scale){
   const n=22+(Math.random()*10|0);
   for(let i=0;i<n;i++){ const a=Math.random()*6.283, sp=50+Math.random()*200;
@@ -269,13 +283,31 @@ function drawZombieHalf(p){
   ctx.restore();
 }
 function drawStink(s){
-  const sx=s.x-camX, a=Math.min(0.4, s.life*0.42);
+  const sx=s.x-camX, a=Math.min(0.6, s.life*0.42);
   const cy=s.y + s.r*0.6;                                    // центр плотности ниже середины -> таяние кверху
   const g=ctx.createRadialGradient(sx, cy, s.r*0.12, sx, cy, s.r*1.2);
-  g.addColorStop(0,   'rgba(106,112,56,'+a.toFixed(3)+')');   // плотный низ-центр
-  g.addColorStop(0.6, 'rgba(106,112,56,'+(a*0.55).toFixed(3)+')');
+  g.addColorStop(0,   'rgba(106,212,56,'+a.toFixed(3)+')');   // плотный низ-центр
+  g.addColorStop(0.6, 'rgba(106,182,56,'+(a*0.55).toFixed(3)+')');
   g.addColorStop(1,   'rgba(106,112,56,0)');                  // края и верх — в прозрачность
   ctx.save(); ctx.beginPath(); ctx.arc(sx, s.y, s.r, 0, 6.283); ctx.fillStyle=g; ctx.fill(); ctx.restore();
+}
+function drawStar(s){
+  const OUT=OUTLINE, lilac='#b478d6';
+  ctx.save();
+  ctx.translate(s.x-camX, s.y);
+  const aw=Math.sin(T*2.6), aw2=Math.cos(T*2.6+1.3);   // махи руками
+  limb(-19,3, -34+aw*3, 16+aw*5, -4, 3, lilac, OUT);                    // руки как у Джейка (за телом)
+  limb( 19,3,  34-aw2*3, 16+aw2*5,  4, 3, lilac, OUT);
+  ctx.beginPath();                                           // лиловое облако-тело (единый силуэт)
+  for(const lb of s.lobes){ ctx.moveTo(lb.dx+lb.rx, lb.dy); ctx.ellipse(lb.dx, lb.dy, lb.rx, lb.ry, 0, 0, 6.283); }
+  ctx.lineWidth=OUTLINE_W; ctx.strokeStyle=OUT; ctx.stroke();
+  ctx.fillStyle=lilac; ctx.fill();
+  blob(0,-13,5,'#ffd633',OUT);                               // жёлтый кружок на лбу
+  blob(-6,-2,1.8,'#22303f',null); blob(6,-2,1.8,'#22303f',null);   // глаза-точки как у Финна
+  const mo=0.8+2.4*(0.5+0.5*Math.sin(T*5));                   // рот открывается/закрывается (radius по y)
+  ctx.beginPath(); ctx.ellipse(0,7,5,mo,0,0,6.283);                  // рот — чёрный эллипс
+  ctx.lineWidth=OUTLINE_W; ctx.strokeStyle=OUT; ctx.stroke(); ctx.fillStyle='#1b2028'; ctx.fill();
+  ctx.restore();
 }
 function drawJuice(j){
   ctx.save(); ctx.globalAlpha=Math.min(1,j.life*2.2);
@@ -288,7 +320,7 @@ const AFTER_DUR = 0.14; // длительность возврата меча в
 function stepChar(c,intent,dt){
   if(intent.move!==0) c.facing=intent.move;
   c.vx = intent.move*c.speed;
-  c.x = clamp(c.x + c.vx*dt, 20, LEVEL_W-20);
+  c.x = clamp(c.x + c.vx*dt, WALL_X, LEVEL_W-20);
 
   if(intent.jump && c.grounded){ c.vy=-c.jumpV; c.grounded=false; }
   const wasAtk = (c.atk||0) > 0;
@@ -429,7 +461,12 @@ function drawFinn(c, isLeader){
   let extend = 0;
   if(c.atk>0) extend = c.atk/ATK_DUR;   // быстро нарастает в начале свинга и держится
   const rise = 6*extend, hipDraw = hipY - rise;            // таз приподнимается -> ноги выпрямляются к тем же стопам
-  blBend *= (1-extend); flBend *= (1-extend);              // колени разгибаются
+
+  if (mv <= 0.1){                    // "стоит на месте": c.moving сглажен и точного 0 не достигает -> порог, а не ==0
+    blBend *= (1-extend);
+    flBend *= (1-extend);            // колени разгибаются при ударе, только когда не идёт
+  }
+
   const leg=(hx,fx,fy,bend,plant)=>{
     limb(hx,hipDraw,fx,fy-13,bend,2,skin,OUT);             // нога от приподнятого таза (при ударе)
     // угол стопы: на земле (plant=1) — параллельно склону; в махе/воздухе — вдоль голени (касательная)
@@ -488,8 +525,55 @@ function drawFinn(c, isLeader){
 }
 
 // Джейк — тело-прямоугольник, конечности и анимация как у Финна (жёлтый, без обуви), круглые уши, крупные глаза
+function drawJakeStretch(c){
+  ctx.translate(0,-10)
+  const body='#f2b63e', OUT=OUTLINE;
+  const lx=(star.x-c.x)*c.facing, ly=star.y-c.y-10;                                // Пупырка в локальной системе Джейка
+  const ph=1-star.grabTimer, reach=ph<0.55?ph/0.55:Math.max(0,1-(ph-0.55)/0.45);
+  const hipY=-26, hx=lx*reach, hy=-50+(ly+50)*reach, bend=18*Math.sin(reach*Math.PI);   // голова тянется по дуге
+  const grip=ph<0.55?reach:1; const hax=hx+(lx-hx)*grip, hay=hy+(ly-hy)*grip;                                // кисти ведут к Пупырке
+  
+  const p=c.walk, mv=c.moving, air=c.grounded?0:1;                                // ноги как у обычного Джейка
+  const stride=c.stepLen*mv, lift=7*mv, hipX=8;
+  let blx,bly,flx,fly,blBend,flBend;
+  if(air){
+    const LEG=18, tb=-0.5, tf=0.3;
+    blx=-hipX+LEG*Math.sin(tb); bly=hipY+LEG*Math.cos(tb);
+    flx= hipX+LEG*Math.sin(tf); fly=hipY+LEG*Math.cos(tf);
+    blBend=-6; flBend=-6;
+  }else{
+    blx=-hipX+footX(p,stride);             bly=-Math.max(0,Math.sin(p))*lift;
+    flx= hipX+footX(p+Math.PI,stride);     fly=-Math.max(0,Math.sin(p+Math.PI))*lift;
+    bly += terrain(c.x + c.facing*blx) - c.y + 5;                                  // стопа на землю (кадр стретча сдвинут вверх на 10)
+    fly += terrain(c.x + c.facing*flx) - c.y + 5;
+    blBend=-4-5*mv*Math.max(0,Math.sin(p));
+    flBend=-4-5*mv*Math.max(0,Math.sin(p+Math.PI));
+  }
+  limb(-hipX,hipY,blx,bly,blBend,2,body,OUT);                                      // дальняя нога — как у обычного Джейка
+  limb( hipX,hipY,flx,fly,flBend,2,body,OUT);                                      // ближняя нога
+  
+  limb(0,hipY, hx,hy, bend, 30, body, OUT);                                        // тянучее тело — толщина 30, как у обычного Джейка
+ 
+  blob(hx-12,hy-7,5, body, OUT); blob(hx+12,hy-7,5, body, OUT);                    // круглые уши (голова скроет внутренний шов)
+  blob(hx,hy,15, body, OUT);                                                       // голова — круг радиуса 15 (как ширина тела обычного Джейка)
+  const eyeR=4.8;
+  blob(hx-7,hy-1,eyeR,'#22303f',OUT); blob(hx+8,hy-1,eyeR,'#22303f',OUT);          // крупные глаза: тёмная подложка
+  blob(hx-6,hy-0.5,eyeR-0.2,'#fff',null); blob(hx+9,hy-0.5,eyeR-0.2,'#fff',null);  // белок поверх
+  limb(hx-4,hy+10, hx+6,hy+10, -10, 4, body, OUT);                                 // морда — полуарка вокруг рта
+  blob(hx+1,hy+8,2,'#23232a',OUT,0.667);                                           // чёрный нос — эллипс 3×2
+
+  limb(hx-15,hy+2, hax-10,hay, -4, 2, body, OUT);                                     // руки тянутся к Пупырке (тонкие)
+  limb(hx+15,hy+2, hax+10,hay, 4, 2, body, OUT);
+}
+function drawReticle(x,y,t){
+  const s=30+Math.sin(t*6)*3;                                                      // пульсирующий прицел
+  ctx.save(); ctx.translate(x,y); ctx.strokeStyle='#ff5b5b'; ctx.lineWidth=2.5; ctx.lineCap='round'; ctx.lineJoin='round';
+  for(let q=0;q<4;q++){ ctx.save(); ctx.rotate(q*Math.PI/2); ctx.beginPath(); ctx.moveTo(s,s-10); ctx.lineTo(s,s); ctx.lineTo(s-10,s); ctx.stroke(); ctx.restore(); }
+  ctx.restore();
+}
 function drawJake(c){
   ctx.translate(0,10)
+  if(typeof star!=='undefined' && star.grabTimer>0){ drawJakeStretch(c); return; }   // тянучая анимация захвата Пупырки
   const body='#f2b63e', OUT=OUTLINE;
   const p=c.walk, mv=c.moving, air=c.grounded?0:1;
   const stride=c.stepLen*mv, lift=7*mv, asw=8*mv;
@@ -517,6 +601,11 @@ function drawJake(c){
     baBend=sb*0.25; faBend=sf*0.25;                        // локоть отстаёт за махом
     blBend=-4-5*mv*Math.max(0,Math.sin(p));                // колено сгибается в фазе подъёма
     flBend=-4-5*mv*Math.max(0,Math.sin(p+Math.PI));
+  }
+  if(typeof star!=='undefined' && star.carried){                                  // несёт Пупырку — руки подняты к ней
+    const px=(star.x-c.x)*c.facing, py=star.y-c.y-10;
+    bax=px-9; bay=py+10; baBend=-7;
+    fax=px+9; fay=py+10; faBend=7;
   }
 
   const leg=(hx,fx,fy,bend)=>{ limb(hx,hipY,fx,fy,bend,2,body,OUT); };   // нога как у Финна, без ботинка/носка
@@ -559,15 +648,16 @@ function drawBanana(c){
   ctx.translate(0,2); ctx.rotate(0.16); ctx.translate(0,-2); // тело наклонено чуть вперёд (вокруг стоп)
   const ow=OUTLINE_W; OUTLINE_W=ow/s;                        // обводка НЕ масштабируется (тело — да)
   const body=c.color||'#c7d15a', OUT=OUTLINE, W2=2;
-  const p=c.walk, sway=Math.sin(T*2.2 + c.x*0.1)*1.4;        // покачивание рук
+  const p=c.walk, sway=Math.sin(T*2.2 + c.x*0.1)*2.2, reach=Math.sin(T*3.1 + c.x*0.07)*2;        // покачивание рук
   const shY=-38, shX=11, hipY=-18, hipX=6, lift=4;
+  const reachUp=(typeof star!=='undefined'&&star.carried)?22:0;   // зомби тянут руки вверх к Пупырке
   const blx=-hipX+footX(p, BANANA_STRIDE),         bfy=2-Math.max(0,Math.sin(p))*lift;        // опора линейно назад -> не скользит
   const flx= hipX+footX(p+Math.PI, BANANA_STRIDE), ffy=2-Math.max(0,Math.sin(p+Math.PI))*lift;
-  limb(shX, shY, 28, shY-3+sway, 2, W2, body, OUT);          // дальняя рука вперёд (за телом)
+  limb(shX, shY, 28+reach, shY-3-reachUp+sway, 2, W2, body, OUT);          // дальняя рука вперёд (за телом)
   limb(-hipX, hipY, blx, bfy, -2, W2, body, OUT);            // дальняя нога
   limb( hipX, hipY, flx, ffy,  2, W2, body, OUT);            // ближняя нога
   roundTopRR(-12,-58,24,46,12, body, OUT);                   // тело: скруглён только верх
-  limb(-shX * 0.5 , shY+2, 27, shY+4+sway, -2, W2, body, OUT);        // ближняя рука вперёд (перед телом)
+  limb(-shX * 0.5 , shY+2, 27+reach, shY+4-reachUp+sway, -2, W2, body, OUT);        // ближняя рука вперёд (перед телом)
   blob(2,-48,1,'#00c000',null); blob(9,-48,1,'#00c000',null);   // глаза-точки (как у Финна)
   blob(3,-42,2,'#000000',null);  // злой оскал
   OUTLINE_W=ow;                                              // вернуть толщину обводки
@@ -665,12 +755,48 @@ function update(dt){
   camX += (camTargetX-camX)*Math.min(1,dt*6);
 
   for(const cl of clouds){ cl.x-=cl.spd*dt; if(cl.x<-200) cl.x=W+200; }
+  // пупырка: Джейк-лидер хватает по Space (если в радиусе ~H/2), через 1с она в руках; повторно — отпускает
+  if(leader.type==='jake' && justPressed['Space']){
+    if(star.carried && (jake.x-WALL_X) < H*0.2){ star.carried=false; star.deliver=0.8; star.delX0=star.x; star.delY0=star.y; }   // у стены замка -> доставить
+    else if(star.carried || star.grabTimer>0){ star.carried=false; star.grabTimer=0; }                              // отпустить/отменить -> в небо
+    else if(Math.hypot(star.x-jake.x, star.y-jake.y) < H*0.7){ star.grabTimer=1; star.grabX=star.x; star.grabY=star.y; }   // схватить: запомнить цель
+  }
+  if(star.grabTimer>0){                                                            // анимация захвата (1с): тянемся, затем втягиваемся
+    star.grabTimer-=dt;
+    const ph=1-star.grabTimer, reach=ph<0.55?ph/0.55:Math.max(0,1-(ph-0.55)/0.45);
+    if(ph<0.55){ star.x=star.grabX; star.y=star.grabY; }                           // фаза 1: Пупырка ждёт, Джейк тянется
+    else { const hx=jake.x+jake.facing*2, hy=jake.y-80; star.x=hx+(star.grabX-hx)*reach; star.y=hy+(star.grabY-hy)*reach; }   // фаза 2: опускается в руки
+    if(star.grabTimer<=0) star.carried=true;
+  }
+  else if(star.carried){ const m=jake.grounded&&jake.moving>0.1; star.x=jake.x+jake.facing*2+(m?Math.sin(jake.walk)*3:0); star.y=jake.y-80+(m?-Math.abs(Math.sin(jake.walk))*4:0); }                                       // несёт на себе
+  else if(star.deliver>0){                                                         // летит на стену замка
+    star.deliver-=dt; const k=Math.min(1,1-star.deliver/0.8), e=k*k*(3-2*k);
+    star.x=star.delX0+(DROP_X-star.delX0)*e; star.y=star.delY0+(DROP_Y-star.delY0)*e-Math.sin(k*Math.PI)*70;
+    if(star.deliver<=0){ deliveredStar={x:DROP_X,y:DROP_Y,lobes:star.lobes}; respawnStar(); }                 // долетела -> на стену, спавним новую
+  }
+  else {                                                                           // в небе: круги; после побега — плавный полёт к орбите
+    const a=T*0.5, rad=75+35*Math.sin(T*0.7);
+    const ox=star.cx+Math.cos(a)*rad, oy=star.cy+Math.sin(a)*rad*0.55;
+    if(star.flee>0){ star.flee-=dt; const k=Math.min(1,1-star.flee/0.7), e=k*k*(3-2*k);
+      star.x=star.fleeX0+(ox-star.fleeX0)*e; star.y=star.fleeY0+(oy-star.fleeY0)*e-Math.sin(k*Math.PI)*60; }   // дуга вверх — улетает в небо
+    else { star.x=ox; star.y=oy; }
+  }
+  { const bJ=document.getElementById('bJump'); if(bJ){ const lbl=leader.type!=='jake'?'МЕЧ':((star.carried||star.grabTimer>0)?'ОТПУСТИТЬ':'СХВАТИТЬ'); if(bJ.textContent!==lbl) bJ.textContent=lbl; } }   // подпись кнопки Space
+  { const tgt=hintText();                                                          // подсказка в центре: спавн/деспавн скейлом
+    if(tgt===hint.text) hint.scale=Math.min(1, hint.scale+dt*5);                   // спавн: скейл 0 -> 1
+    else { hint.scale-=dt*5; if(hint.scale<=0){ hint.scale=0; hint.text=tgt; } } } // деспавн -> смена текста
   bananaTimer -= dt;
   if(bananaTimer<=0){ spawnBanana(); bananaTimer = 1.4 + Math.random()*2.2; }
+  if(deliveredStar && DROP_X - camX < 0) deliveredStar = null;                      // Пупырка в замке исчезает, когда уехала за левый край экрана
+  if(star.carried && camX > WALL_X){ bananaTimerL -= dt;                            // несём Пупырку и замка не видно -> зомби слева тоже, реже
+    if(bananaTimerL<=0){ spawnBananaLeft(); bananaTimerL = 3.2 + Math.random()*3.0; } }
   for(const b of bananas){
-    b.x -= b.speed*dt; b.y = terrain(b.x); b.walk += b.speed*dt*Math.PI/(2*BANANA_STRIDE*b.scale);   // шаг = путь -> без проскальзывания
+    const dir = star.carried ? (Math.sign(star.x-b.x)||-1) : -1;     // к Пупырке (в руках Джейка) или влево за экран
+    b.facing = dir; b.x += dir*b.speed*dt; b.y = terrain(b.x);
+    b.walk += b.speed*dt*Math.PI/(2*BANANA_STRIDE*b.scale);          // шаг = путь -> без проскальзывания
+    if(star.carried && Math.abs(b.x-star.x) < 22*b.scale){ star.carried=false; star.grabTimer=0; star.flee=0.7; star.fleeX0=star.x; star.fleeY0=star.y; }   // дотянулся -> Пупырка улетает
     const ms=Math.min(b.scale,1.8);
-    if(Math.random()<dt*3.4) stink.push({ x:b.x+(Math.random()-0.5)*18*b.scale, y:b.y-(18+Math.random()*32)*b.scale, vx:(Math.random()-0.5)*8, vy:-26-Math.random()*18, r:(3+Math.random()*10)*ms, life:1.4+Math.random()*0.8, grow:9+Math.random()*7 });   // пар-вонь
+    if(Math.random()<dt*3.4) stink.push({ x:b.x -10 + (Math.random()-0.5)*10*b.scale, y:b.y-58 * b.scale, vx:(Math.random()-0.8)*4, vy:-26-Math.random()*18, r:(15+Math.random()*5)*ms, life:0.4+Math.random()*0.4, grow:-15-Math.random() });   // пар-вонь
   }
   bananas = bananas.filter(b => b.x > camX - 70);   // ушли за левый край -> уничтожить
   if(leader.type==='finn' && leader.atk>0 && leader.atk<ATK_DUR*0.7 && !leader.atkHit){   // удар мечом разрубает зомби
@@ -707,20 +833,56 @@ function drawWatch(){
   ctx.restore();
 }
 
+function drawCastle(){                                                  // стена замка слева — место доставки
+  const sx = Math.round(WALL_X - camX);
+  if(sx < -5) return;
+  const left=-40, top=WALL_TOP, bot=H+10, mW=15, gW=11, mH=14;
+  ctx.save(); ctx.lineWidth=1; ctx.strokeStyle=OUTLINE; ctx.lineJoin='miter'; ctx.fillStyle='#8f9199';
+  ctx.fillRect(left, top, sx-left, bot-top);                            // серый прямоугольник
+  ctx.beginPath(); ctx.moveTo(left, top); ctx.lineTo(sx, top); ctx.lineTo(sx, bot); ctx.stroke();   // чёрная обводка наверху + правый край
+  for(let mx=sx-mW; mx>left; mx-=(mW+gW)){ ctx.fillRect(mx, top-mH, mW, mH); ctx.strokeRect(mx, top-mH, mW, mH); }   // зубцы
+  ctx.restore();
+}
+function hintText(){                                                              // текст подсказки по состоянию игры
+  if(star.carried) return ((leader.type==='jake' && (jake.x-WALL_X) < H*0.2) ? 'отпусти принцессу' : 'отнесите принцессу в замок');
+  if(star.deliver>0) return "";                                                   // летит в замок — пауза
+  const sx=star.x-camX;
+  if(sx>40 && sx<W-40 && star.y>10 && star.y<H-30) return 'джейк, поймай пупырку!';   // видна на экране
+  return 'найди принцессу пупырку!';                                            // летает где-то
+}
+function drawHint(){                                                              // красный текст с чёрной обводкой, буквы покачиваются
+  if(!hint.text || hint.scale<=0.01) return;
+  ctx.save(); ctx.translate(W/2, H*0.30); ctx.scale(hint.scale, hint.scale);      // скейл = анимация спавна/деспавна
+  ctx.font='bold 34px Arial, sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.lineJoin='round'; ctx.lineWidth=6;
+  const txt=hint.text, ws=[]; let total=0;
+  for(let i=0;i<txt.length;i++){ const w=ctx.measureText(txt[i]).width; ws.push(w); total+=w; }
+  let x=-total/2;
+  for(let i=0;i<txt.length;i++){ const w=ws[i], gx=x+w/2, wob=Math.sin(T*5+i*0.55)*4;   // покачивание каждой буквы
+    ctx.strokeStyle='#000'; ctx.strokeText(txt[i], gx, wob); ctx.fillStyle='#ff3b3b'; ctx.fillText(txt[i], gx, wob); x+=w; }
+  ctx.restore();
+}
 function render(){
   ctx.fillStyle=sky; ctx.fillRect(0,0,W,H);
   for(const cl of clouds) drawCloud(cl);
   drawHillLayer(farHill,0.30,'#b9d6cf');
   drawHillLayer(midHill,0.55,'#8fc77c');
+  drawCastle();
   drawGround();
   drawGrass();
+
+  if(deliveredStar) drawStar(deliveredStar);   // доставленная Пупырка на стене
   for(const s of stink) drawStink(s);
   for(const b of bananas) drawChar(b,false);
   for(const pc of pieces) drawZombieHalf(pc);
   drawChar(follower,false);
+  drawStar(star);
   drawChar(leader,true);
+
+  if(leader.type==='jake' && !star.carried && star.grabTimer<=0 && Math.hypot(star.x-jake.x,star.y-jake.y)<H*0.7) drawReticle(star.x-camX, star.y, T);   // прицел: можно схватить
+  if(leader.type==='jake' && star.carried && (jake.x-WALL_X) < H*0.2) drawReticle(DROP_X-camX, DROP_Y, T);   // прицел: место высадки
   for(const j of juice) drawJuice(j);
   drawWatch();
+  drawHint();
 }
 
 let last=performance.now();
