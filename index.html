@@ -854,7 +854,9 @@ function hintText(){                                                            
 function drawHint(){                                                              // красный текст с чёрной обводкой, буквы покачиваются
   if(!hint.text || hint.scale<=0.01) return;
   ctx.save(); ctx.translate(W/2, H*0.20); ctx.scale(hint.scale, hint.scale);      // скейл = анимация спавна/деспавна
-  ctx.font='bold 34px Arial, sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.lineJoin='round'; ctx.lineWidth=3;
+  //ctx.font='bold 34px Arial, sans-serif'; 
+  ctx.font='44px "Amatic SC", Arial, sans-serif'; 
+  ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.lineJoin='round'; ctx.lineWidth=3;
   const txt=hint.text, ws=[]; let total=0;
   for(let i=0;i<txt.length;i++){ const w=ctx.measureText(txt[i]).width; ws.push(w); total+=w; }
   let x=-total/2;
