@@ -787,7 +787,7 @@ function update(dt){
     if(tgt===hint.text) hint.scale=Math.min(1, hint.scale+dt*5);                   // спавн: скейл 0 -> 1
     else { hint.scale-=dt*5; if(hint.scale<=0){ hint.scale=0; hint.text=tgt; } } } // деспавн -> смена текста
   bananaTimer -= dt;
-  if(bananaTimer<=0){ spawnBanana(); bananaTimer = 1.4 + Math.random()*2.2; }
+  if(bananaTimer<=0){ spawnBanana(); bananaTimer = 2.4 + Math.random()*2.2; }
   if(deliveredStar && DROP_X - camX < 0) deliveredStar = null;                      // Пупырка в замке исчезает, когда уехала за левый край экрана
   if(star.carried && camX > WALL_X){ bananaTimerL -= dt;                            // несём Пупырку и замка не видно -> зомби слева тоже, реже
     if(bananaTimerL<=0){ spawnBananaLeft(); bananaTimerL = 3.2 + Math.random()*3.0; } }
